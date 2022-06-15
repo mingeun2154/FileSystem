@@ -9,9 +9,7 @@
 	* [bitmap](file:///Users/mingeun/portfolio/FileSystem/README.md#bitmap)
 
 
-* ### [구현](https://github.com/mingeun2154/FileSystem)
-	* [소스코드](https://github.com/mingeun2154/FileSystem)
-	* 설명    
+* ### [구현](https://github.com/mingeun2154/FileSystem/src)
       
 ### Disk
 
