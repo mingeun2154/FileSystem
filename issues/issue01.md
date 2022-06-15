@@ -1,5 +1,3 @@
-> hw02를 구현 과정에서  발생한 문제들과 해결과정
-
 ## issue01 : free(): invalid pointer  
 * ### tirgger  
 	CreateFileSystem() 함수를 테스트하기 위한 CreateFileSystemTest() 함수를 실행  
