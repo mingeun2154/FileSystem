@@ -1,5 +1,6 @@
 #include <stdio.h>
 #include <stdlib.h>
+#include <string.h>
 #include "disk.h"
 #include "hw1.h"
 #include "hw2.h"
@@ -7,8 +8,8 @@
 FileDescTable* pFileDescTable;
 FileSysInfo* pFileSysInfo;
 
-const wchar_t* CURRENT_DIRCTORY_NAME = L".";
-const wchar_t* PARENT_DIRECTORY_NAME = L"..";
+const char* CURRENT_DIRCTORY_NAME = ".";
+const char* PARENT_DIRECTORY_NAME = "..";
 
 int OpenFile(const char* name, OpenFlag flag)
 {
@@ -63,10 +64,8 @@ void CreateFileSystem(void)
   DirEntry* pDirBlock = malloc(BLOCK_SIZE); // directory block는 directory entry의 배열이다
   /** 
    * Directory block을 disk에 저장.
-   * size_t wcstombs(char *str, const wchar_t *pwcs, size_t n)
-   * wide-char string pwcs를 str에서 시작하는 char 배열로 전환한다.
    * **/
-  wcstombs(pDirBlock[0].name, CURRENT_DIRCTORY_NAME, MAX_NAME_LEN);
+  strcpy(pDirBlock[0].name, CURRENT_DIRCTORY_NAME);
   pDirBlock[0].inodeNum=freeInodeNum; // inode number 저장.
   DevWriteBlock(freeBlockNum, (char*)pDirBlock); // 빈 block(block7)에 root directory가 저장된다.
   free(pDirBlock);
