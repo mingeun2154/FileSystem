@@ -5,11 +5,19 @@
 #include "hw1.h"
 #include "hw2.h"
 
-FileDescTable* pFileDescTable;
-FileSysInfo* pFileSysInfo;
-
+/********************** 추가적인 변수&함수 **********************/
 const char* CURRENT_DIRCTORY_NAME = ".";
 const char* PARENT_DIRECTORY_NAME = "..";
+const char SLASH_CHAR = '/';
+const char* SLASH_STRING = "/";
+
+int CountSLASH(char* name);
+void GetFileNames(char* name, int count, char** nameList);
+/************************** 2018203023 **************************/
+
+
+FileDescTable* pFileDescTable;
+FileSysInfo* pFileSysInfo;
 
 int OpenFile(const char* name, OpenFlag flag)
 {
@@ -39,9 +47,17 @@ int RemoveFile(char* name)
 }
 
 
+// return 0 on success, -1 on failure.
 int MakeDirectory(char* name)
 {
+  char* token;
+  token=strtok(name, "/");
+  while(token){
+    printf("%s\n", token);
+    token=strtok(NULL, "/");
+  }
 
+  return 0;
 }
 
 
@@ -133,4 +149,30 @@ FileInfo* ReadDirectory(Directory* pDir)
 int CloseDirectory(Directory* pDir)
 {
 
+}
+
+/****************** 추가적으로 구현한 함수입니다 ******************/
+// 절대경로에서 SLASH(/)의 개수를 반환한다.
+int CountSLASH(char *name){
+  int count =0;
+  int i=0;
+  while(name[i]!='\0'){
+    if(name[i]==SLASH_CHAR)
+      count++;
+    i++;
+  }
+
+  return count;
+}
+
+// 절대경로에 포함된 모든 디렉토리(파일) 이름을 전달받은 nameList에 담는다.
+void GetFileNames(char* name, int count, char** nameList){
+  // count = (절대경로에 포함된 이름의 개수) = (SLASH 개수)
+  char* string = "/temp1/temp2/temp3";
+  // Extract the first token
+  char * token = strtok(string, "/");
+  while(token!=NULL){
+    printf("%s\n", token); //printing the token
+    token=strtok(NULL, "/");
+  }
 }

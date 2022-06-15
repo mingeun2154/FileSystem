@@ -9,10 +9,13 @@
 #define DATA_REGION_FIRST (INODELIST_BLOCK_FIRST+INODELIST_BLOCKS)
 
 int CreateFileSystemTest(void);
+void MakeDirectoryTest(void);
 
 int main(void){
   printf("Test start\n");
-  CreateFileSystemTest();
+  //CreateFileSystemTest();
+  MakeDirectoryTest();
+
   return 0;
 }
 
@@ -84,4 +87,15 @@ int CreateFileSystemTest(void){
   printf("OK\n");
 
   printf("Test successed\n");
+}
+
+void MakeDirectoryTest(void){
+  /**
+  printf("MakeDirectory(\"/temp\")...");
+  MakeDirectory("/temp");
+  **/
+  printf("MakeDirectory(\"/temp1/temp2\")...\n");
+  MakeDirectory("/temp1");
+  printf("MakeDirectory(\"/temp1/temp2/temp3\")...\n");
+  MakeDirectory("/temp1/temp2/temp3");
 }
