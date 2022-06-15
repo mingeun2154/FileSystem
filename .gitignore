@@ -1,2 +1,6 @@
 # macOS
 *.DS_Store
+# 오브젝트, 실행 파일
+*.o
+test
+MY_DISK
