@@ -6,3 +6,5 @@ test
 MY_DISK
 # template
 template*
+# vscode
+*.vscode
