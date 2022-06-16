@@ -6,6 +6,8 @@
 #include "hw2.h"
 
 /********************** 추가적인 변수&함수 **********************/
+#define DIRECT_BLOCK_NUM 4
+
 const char* CURRENT_DIRCTORY_NAME = ".";
 const char* PARENT_DIRECTORY_NAME = "..";
 const char SLASH_CHAR = '/';
@@ -50,16 +52,139 @@ int RemoveFile(char* name)
 // return 0 on success, -1 on failure.
 int MakeDirectory(char* name)
 {
-  char* token;
-  token=strtok(name, "/");
-  while(token){
-    printf("%s\n", token);
-    token=strtok(NULL, "/");
-  }
+  FileSysInfo* fileSysInfo=malloc(BLOCK_SIZE);
+  DevReadBlock(FILESYS_INFO_BLOCK, (char*)fileSysInfo);
+
+  if(fileSysInfo->numFreeBlocks==0)
+    return -1;
+
+  /** 1. free block, free inode 검색 **/
+  int freeBlock=GetFreeBlockNum();
+  int freeInode=GetFreeInodeNum();
+
+  /** 2. 만드려는 파일의 상위 디렉토리의 inode number 얻는다. 
+   *     그리고 parent directory의 빈 directory entry 위치를 얻는다.**/
+  int count=CountSLASH(name);// count = (절대경로에 포함된 이름의 개수) = (SLASH 개수)
+  char** nameList=calloc(count, sizeof(char*)); // 절대경로의 이름들이 저장될 배열
+  GetFileNames(name, count, nameList);
+
+  int rootInodeNum=fileSysInfo->rootInodeNum;
+  int parentInodeNum=rootInodeNum; // 최종적으로 생성할 파일의 parent directory의 inode number가 저장된다.
+  Inode* pInode = malloc(sizeof(Inode));
+  DirEntry* pEntry = malloc(sizeof(DirEntry)); // 새로 생성할 파일이 저장될 entry
+  GetInode(parentInodeNum, pInode);
+  int dirEntryNum=BLOCK_SIZE/sizeof(DirEntry); // 블럭 한개 당 directory entry 개수
+
+  int freeBlockPtr; // 생성할 파일을 추가할 direct block의 index
+  int freeEntryIdx; // block에서의 index
+  if(count==1){ /** root directory에 만드는 경우 **/
+    BOOL isFound=0;
+    Inode* checkDup=malloc(sizeof(Inode)); // 이미 동일한 이름의 디렉토리가 있는지 확인하기 위한 inode.
+    // 빈 directory entry를 찾는다.
+    /** indirect block에서 빈자리를 찾는 경우 **/
+    if((pInode->indirectBlockPtr)!=0){ 
+      for(int j=0;j<dirEntryNum;j++){
+        if(GetDirEntry(pInode->indirectBlockPtr, j, pEntry)<0){
+          freeBlockPtr=pInode->indirectBlockPtr; 
+          freeEntryIdx=j;
+          isFound=1;
+          break;
+        }
+        GetInode(pEntry->inodeNum, checkDup);
+        if((checkDup->type==FILE_TYPE_DIR) && (strcmp(pEntry->name, nameList[1])==0)){
+          printf("이미 존재하는 디렉토리입니다\n");
+          return -1;
+        }
+      }
+      if(isFound==0)
+      printf("%s 용량 초과\n", pEntry->name);
+      return -1;
+    }
+    /** direct block에서 빈자리를 찾는 경우  **/
+    else{
+      GetDirEntry(pInode->dirBlockPtr[0], 0, pEntry);
+      for(int i=0;i<pInode->allocBlocks;i++){
+        if(isFound!=0)
+          break;
+        for(int j=0;j<dirEntryNum;j++){
+          if(GetDirEntry(pInode->dirBlockPtr[i], j, pEntry)<0){
+            freeBlockPtr=i; 
+            freeEntryIdx=j;
+            isFound=1;
+            break;
+          }
+        }
+        GetInode(pEntry->inodeNum, checkDup);
+        if((checkDup->type==FILE_TYPE_DIR) && (strcmp(pEntry->name, nameList[1])==0)){
+          printf("이미 존재하는 디렉토리입니다\n");
+          return -1;
+        }
+      }
+      // printf("%d %d\n", freeBlockPtr, freeEntryIdx);
+    }
+    free(checkDup);
+  }// count=1
+
+  /** root directory가 아닌 directory에 새 파일을 생성하는 경우 **/
+  else{
+    /** 절대경로의 모든 이름 개수만큼 반복
+    ex. "/temp1/temp2/temp3" : root->temp1->temp2 -> temp2의 inode획득 **/
+    for(int i=0;i<=count-1;i++){
+      BOOL flag = 1; // 원하는 파일을 찾으면 false(0)
+      /** direct block, indirect block에서 이름이 nameList[i]인 파일을 찾는다 **/ 
+      while(flag){
+        GetInode(parentInodeNum, pInode);
+        /** direct Block pointer(최대 4개)가 가리키는 블록을 탐색. **/
+        for(int j=0;j<pInode->allocBlocks;j++){
+          if(!flag)
+            break;
+          int dirEntryIndex=0;
+          while(GetDirEntry(pInode->dirBlockPtr[j], dirEntryIndex, pEntry)){
+            // block 하나에는 directory entry가 16개 존재한다.
+            if(dirEntryIndex >= dirEntryNum)
+              break;
+            /** 경로상의 파일을 찾은 경우 **/
+            if(strcmp(pEntry->name, nameList[i])==0){
+              flag=0; 
+              parentInodeNum=pEntry->inodeNum; 
+              break;
+            }
+            dirEntryIndex++;
+          }
+        }
+        /** inderct block 탐색 **/
+        if(flag==1){
+          if(pInode->indirectBlockPtr==0){ // direct block에 없고 indirect block이 없다 -> 존재하지 않는 경로
+            return -1;
+          }
+          // indirect block
+          int dirEntryIndex=0;
+          while(GetDirEntry(pInode->indirectBlockPtr, dirEntryIndex, pEntry)){
+            if(dirEntryIndex>=dirEntryNum){
+              return -1; // 특정 이름이 존재하지 않는다. -> 존재하지 않는 경로
+            }
+            /** 경로상의 파일을 찾음 **/ 
+            if(strcmp(pEntry->name, nameList[i])==0){
+              flag=0;
+              parentInodeNum=pEntry->inodeNum;
+              break;
+            }
+          }
+        }
+      }
+    }
+  }// count>1
+  
+  printf("%s", pEntry->name);
+  printf("%d\n", pEntry->inodeNum);
+
+  free(fileSysInfo);
+  free(nameList);
+  free(pInode);
+  free(pEntry);
 
   return 0;
 }
-
 
 int RemoveDirectory(char* name)
 {
@@ -83,6 +208,8 @@ void CreateFileSystem(void)
    * **/
   strcpy(pDirBlock[0].name, CURRENT_DIRCTORY_NAME);
   pDirBlock[0].inodeNum=freeInodeNum; // inode number 저장.
+  for(int i=1;i<BLOCK_SIZE/sizeof(DirEntry);i++)
+    pDirBlock[i].inodeNum=INVALID_ENTRY;
   DevWriteBlock(freeBlockNum, (char*)pDirBlock); // 빈 block(block7)에 root directory가 저장된다.
   free(pDirBlock);
 
@@ -93,7 +220,7 @@ void CreateFileSystem(void)
   pInode->size = (pInode->allocBlocks * BLOCK_SIZE);
   pInode->type=FILE_TYPE_DIR;
   pInode->dirBlockPtr[0]=freeBlockNum;
-  pInode->indirectBlockPtr=INVALID_ENTRY;
+  //pInode->indirectBlockPtr=INVALID_ENTRY;
   PutInode(freeInodeNum, pInode);
   free(pInode);
 
@@ -168,11 +295,12 @@ int CountSLASH(char *name){
 // 절대경로에 포함된 모든 디렉토리(파일) 이름을 전달받은 nameList에 담는다.
 void GetFileNames(char* name, int count, char** nameList){
   // count = (절대경로에 포함된 이름의 개수) = (SLASH 개수)
-  char* string = "/temp1/temp2/temp3";
-  // Extract the first token
-  char * token = strtok(string, "/");
+  char* path = calloc(strlen(name), sizeof(char)); // name을 쓰기가 가능한 메모리 공간에 담는다
+  strcpy(path, name);
+  char * token = strtok(path, SLASH_STRING);
+  int i=0;
   while(token!=NULL){
-    printf("%s\n", token); //printing the token
+    nameList[i++]=token;
     token=strtok(NULL, "/");
   }
 }
