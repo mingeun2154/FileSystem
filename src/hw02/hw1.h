@@ -23,13 +23,21 @@
 
 
 
+typedef enum __fileType {
+    FILE_TYPE_FILE,
+    FILE_TYPE_DIR,
+    FILE_TYPE_DEV
+} FileType;
+
+
 typedef struct _Inode {
-    int     allocBlocks;
-    int     size;
-    int     type;
-    int     dirBlockPtr[NUM_OF_DIRECT_BLOCK_PTR];   // block pointers
-    int     indirectBlockPtr;               // indirect block pointer
+    int          allocBlocks;
+    int          size;
+    FileType   type;
+    int          dirBlockPtr[NUM_OF_DIRECT_BLOCK_PTR];   // block pointers
+    int          indirectBlockPtr;               // indirect block pointer
 } Inode;
+
 
 
 typedef struct  __dirEntry {

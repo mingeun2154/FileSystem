@@ -26,13 +26,6 @@ typedef enum __OpenFlag {
 } OpenFlag;
 
 
-typedef enum __fileType {
-    FILE_TYPE_FILE,
-    FILE_TYPE_DIR,
-    FILE_TYPE_DEV
-} FileType;
-
-
 typedef struct _FileSysInfo {
     int blocks;              // 디스크에 저장된 전체 블록 개수
     int rootInodeNum;        // 루트 inode의 번호
