@@ -1,4 +1,6 @@
 ## issue02 : strtok() 함수
+2022-06-16  
+
 * ### tirgger  
 	delimiter(구분자)가 두 개 이상인 문자열에 대한 적용
 * ### error message
