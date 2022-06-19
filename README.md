@@ -11,6 +11,7 @@
 
 * ### [구현](https://github.com/mingeun2154/FileSystem/tree/main/src)
 	* [int MakeDirectory(char* name)](file:///home/mingeun/portfolio/FileSystem/README.md#makedirectorychar-name)
+	* [int OpenFile(char* name, OpenFlag flag)](file:///home/mingeun/portfolio/FileSystem/README.md#int-openfilechar-name-openflag-flag)
 
 ##   
 ### Disk
@@ -37,3 +38,11 @@
 7. Update metadata
 	1. Update block, inode bytemap
 	2. Update FileSysInfo
+
+### int OpenFile(char* name, OpenFlag flag)    
+> name : 생성할 파일의 경로  
+> OPEN_FLAG_CREATE : 존재하지 않는 파일이면 __생성__ 하고 offset=0.  
+> OPEN_FLAG_TRUC : file의 __내용을 지우고__ open. offset=0 으로 설정.   
+> OPEN_FLAG_APPEND : __offset=(마지막 부분+1)__ 로 설정된다.   
+> return value : open file의 descriptor value(성공) -1(실패)
+
