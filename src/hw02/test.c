@@ -205,20 +205,36 @@ void MakeDirectoryTest(void){
 }
 
 void OpenFileTest(){
+  printf("-------------------------------------------------------");
+  printf("OpenFileTest\n");
 
-  //MakeDirectory("/temp1");
-  //MakeDirectory("/temp1/temp2");
+  MakeDirectory("/temp1");
+  MakeDirectory("/temp1/temp2");
 
-  printf("%d\n", OpenFile("/a.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/b.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/c.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/d.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/e.c", OPEN_FLAG_CREATE));
-
-  printf("%d\n", OpenFile("/b.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/c.c", OPEN_FLAG_CREATE));
-  printf("%d\n", OpenFile("/e.c", OPEN_FLAG_CREATE));
-  //OpenFile("/temp1/a.c", OPEN_FLAG_CREATE);
-  //OpenFile("temp1/temp2/a.c", OPEN_FLAG_CREATE);
+  int fd1;
+  int fd2;
+  int fd3;
+  printf("%-30s\t", "OpenFile(/temp1/a.c, OPEN_FLAG_CREATE) ...");
+  if((fd1=OpenFile("/temp1/a.c", OPEN_FLAG_CREATE))<0){
+    printf("/temp1/a.c 실패\n");
+    return;
+  }
+  printf("%10s\n", "OK");
+  printf("%-30s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
+  if((fd2=OpenFile("temp1/temp2/a.c", OPEN_FLAG_CREATE))<0){
+    printf("/temp1/temp2/a.c 실패\n");
+    return;
+  }
+  printf("%10s\n", "OK");
+  printf("%-30s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
+  if((fd3=OpenFile("temp1/temp2/a.c", OPEN_FLAG_CREATE))<0){
+    printf("/temp1/temp2/a.c 실패\n");
+    return;
+  }
+  else if(fd2==fd3){
+    printf("/temp1/temp2/a.c 실패\n");
+    return;
+  }
+  printf("%10s\n", "OK");
 
 }
