@@ -17,14 +17,16 @@ const char SLASH_CHAR = '/';
 const char* SLASH_STRING = "/";
 const int NUM_OF_INDIRECT_BLOCK_PTR=BLOCK_SIZE/(sizeof(int)); // 128개
 const int MAX_ALLOC_BLOCKS =NUM_OF_DIRECT_BLOCK_PTR + NUM_OF_INDIRECT_BLOCK_PTR; // 132
+const int DESC_TABLE_SIZE=sizeof(int)+((sizeof(int)+sizeof(int))*DESC_ENTRY_NUM); //628
 
 int CountSLASH(char* name);
 void GetFileNames(char* name, int count, char** nameList);
-int CheckDup(Inode* parentInode, char* name, FileType fileType);
+int GetFreeDescTableEntryIdx(FileDescTable* pFileDescTable);
+int GetFreeFileTableEntryIdx(FileTable* pFileTable);
 /************************** 2018203023 **************************/
 
-
 FileDescTable* pFileDescTable;
+FileTable* pFileTable;
 FileSysInfo* pFileSysInfo;
 
 int OpenFile(const char* name, OpenFlag flag)
@@ -35,7 +37,7 @@ int OpenFile(const char* name, OpenFlag flag)
     return -1; // free inode 없음
   
   /** 2. parent directory 탐색 **/
-  BOOL isExist; // 이미 존재하는 파일이면 1, 없으면 0
+  BOOL isExist=0; // 이미 존재하는 파일이면 1, 없으면 0
 
   int count=CountSLASH(name);
   char** nameList=calloc(count, sizeof(char*));
@@ -121,6 +123,8 @@ int OpenFile(const char* name, OpenFlag flag)
   /** 3-1. 이미 존재하는 파일인지 확인 **/
   // direct block 에서 중복 확인
   for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
+    if(isExist==1)
+      break;
     if(parentInode->dirBlockPtr[blockPtrIdx]==0){
       continue;
     }
@@ -134,17 +138,20 @@ int OpenFile(const char* name, OpenFlag flag)
         if((strcmp(pEntry->name, openFileName)==0)&&((pInode->type)==FILE_TYPE_FILE)){
           isExist=1;
           isFound=1;
+          break;
         }
         free(pInode);
       }
     }
   }
   // indirect block이 존재하는 경우, indirect block 에서 중복 확인
-  if(parentInode->indirectBlockPtr!=0){
+  if((isExist==0)&&(parentInode->indirectBlockPtr!=0)){
     char* indirectBlockPtrs=malloc(BLOCK_SIZE);
     DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
     int blockPtr; // block pointer = block number
     for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+      if(isExist==1)
+        break;
       blockPtr=indirectBlockPtrs[i];
       for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
         if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
@@ -156,6 +163,7 @@ int OpenFile(const char* name, OpenFlag flag)
           if((strcmp(pEntry->name, openFileName)==0) && (pInode->type==FILE_TYPE_FILE)){
             isExist=1;
             isFound=1;
+            break;
           }
           free(pInode);
         }
@@ -164,33 +172,35 @@ int OpenFile(const char* name, OpenFlag flag)
     free(indirectBlockPtrs);
   }
   // 3-2. direct block에서 free entry를 찾는다.
-  for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
-    if(isFound==1)
-      break;
-    // direct block을 추가적으로 할당해야 하는 경우.
-    if(parentInode->dirBlockPtr[blockPtrIdx]==0){
-      isFound=1;
-      parentBlockNum=GetFreeBlockNum();
-      SetBlockBytemap(parentBlockNum);
-      parentInode->dirBlockPtr[blockPtrIdx]=parentBlockNum;
-      // 새로 할당한 direct block의 모든 entry를 invalid로 초기화한다.
-      DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
-      for(int i=0;i<DIR_ENTRY_NUM;i++)
-        newBlockEntry[i].inodeNum=INVALID_ENTRY;
-      DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
-      free(newBlockEntry);
-      parentFreeEntryIdx=0;
-      break;
-    }
-    for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
-      if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){
+  if(isFound==0){
+    for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
+      if(isFound==1)
+        break;
+      // direct block을 추가적으로 할당해야 하는 경우.
+      if(parentInode->dirBlockPtr[blockPtrIdx]==0){
         isFound=1;
-        parentBlockNum=parentInode->dirBlockPtr[blockPtrIdx];
-        parentFreeEntryIdx=entryIdx;
+        parentBlockNum=GetFreeBlockNum();
+        SetBlockBytemap(parentBlockNum);
+        parentInode->dirBlockPtr[blockPtrIdx]=parentBlockNum;
+        // 새로 할당한 direct block의 모든 entry를 invalid로 초기화한다.
+        DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
+        for(int i=0;i<DIR_ENTRY_NUM;i++)
+          newBlockEntry[i].inodeNum=INVALID_ENTRY;
+        DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
+        free(newBlockEntry);
+        parentFreeEntryIdx=0;
         break;
       }
-      else
-        continue;
+      for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+        if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){
+          isFound=1;
+          parentBlockNum=parentInode->dirBlockPtr[blockPtrIdx];
+          parentFreeEntryIdx=entryIdx;
+          break;
+        }
+        else
+          continue;
+      }
     }
   }
   // 3-3. indirect block에서 free entry를 찾는다.
@@ -238,7 +248,95 @@ int OpenFile(const char* name, OpenFlag flag)
     free(indirectBlockPtrs);
   }
 
-  /** 4. **/
+  // 새 파일이 추가될 parent block number와 parent block entry 출력
+  // printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
+
+  printf("파일 생성\t");
+  /** 4-1. 존재하지 않는 file 생성. parent directory에 open file을 entry로 추가 **/
+  if((isExist==0)&&(flag==OPEN_FLAG_CREATE)){
+    DirEntry* parentDirBlock=malloc(BLOCK_SIZE);
+    DevReadBlock(parentBlockNum, (char*)parentDirBlock);
+    parentDirBlock[parentFreeEntryIdx].inodeNum=freeInodeNum;
+    strcpy(parentDirBlock[parentFreeEntryIdx].name, openFileName);
+    DevWriteBlock(parentBlockNum, (char*)parentDirBlock);
+    free(parentDirBlock);
+
+    /** 5. inode 설정 **/
+    Inode* pInode=malloc(sizeof(Inode));
+    GetInode(freeInodeNum, pInode);
+    pInode->type=FILE_TYPE_FILE;
+    // allocblocks, dirBlockPtr, indirectBlockPtr, size는 모두 0이므로 수정할 필요 없음.
+    PutInode(freeInodeNum, pInode);
+    SetInodeBytemap(freeInodeNum);
+    free(pInode);
+
+    /** 6. update FileSystemInfo **/
+    pFileSysInfo=malloc(BLOCK_SIZE);
+    DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+    pFileSysInfo->numAllocInodes++;
+    DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+    free(pFileSysInfo);
+
+    /** 7. descriptor table, file table, file object 설정 **/
+    // descriptor table이 없었다면 생성.
+    if(pFileDescTable==NULL)
+      pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
+    // file table이 없었다면 생성. 
+    if(pFileTable==NULL)
+      pFileTable=calloc(sizeof(FileTable), sizeof(char));
+
+    int freeFDTableEtnry=GetFreeDescTableEntryIdx(pFileDescTable);
+    int freeFileTableEntry=GetFreeFileTableEntryIdx(pFileTable);
+    printf("%d, %d\n", freeFDTableEtnry, freeFileTableEntry);
+
+    // descriptor table
+    pFileDescTable->numUsedDescEntry++;
+    pFileDescTable->pEntry[freeFDTableEtnry].bUsed=1;
+    pFileDescTable->pEntry[freeFDTableEtnry].fileTableIndex=freeFileTableEntry;
+    // file table
+    pFileTable->numUsedFile++;
+    pFileTable->pFile[freeFileTableEntry].bUsed=1;
+    pFileTable->pFile[freeFileTableEntry].inodeNum=freeInodeNum;
+    pFileTable->pFile[freeFileTableEntry].fileOffset=0;
+
+    free(parentInode);
+    free(pEntry);
+
+    return freeFDTableEtnry; // file descriptor number 반환.
+  }
+  /** 4-2. 이미 존재하는 파일 open **/
+  else if((isExist==1)&&(flag==OPEN_FLAG_CREATE)){
+    printf("이미 존재하는 파일%d 오픈\t", pEntry->inodeNum);
+    /** 7. descriptor table, file table, file object 설정 **/
+    // descriptor table이 없었다면 생성.
+    if(pFileDescTable==NULL)
+      pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
+    // file table이 없었다면 생성. 
+    if(pFileTable==NULL)
+      pFileTable=calloc(sizeof(FileTable), sizeof(char));
+
+    int freeFDTableEtnry=GetFreeDescTableEntryIdx(pFileDescTable);
+    int freeFileTableEntry=GetFreeFileTableEntryIdx(pFileTable);
+    printf("%d, %d\n", freeFDTableEtnry, freeFileTableEntry);
+
+    // descriptor table
+    pFileDescTable->numUsedDescEntry++;
+    pFileDescTable->pEntry[freeFDTableEtnry].bUsed=1;
+    pFileDescTable->pEntry[freeFDTableEtnry].fileTableIndex=freeFileTableEntry;
+    // file table
+    pFileTable->numUsedFile++;
+    pFileTable->pFile[freeFileTableEntry].bUsed=1;
+    pFileTable->pFile[freeFileTableEntry].inodeNum=pEntry->inodeNum;
+    pFileTable->pFile[freeFileTableEntry].fileOffset=0;
+
+    free(parentInode);
+    free(pEntry);
+
+    return freeFDTableEtnry; // file descriptor number 반환.
+  }
+  /** 4-3. OPEN_FLAG_TRUNCATE **/
+  /** 4-4. OPEN_FLAG_APPEND **/
+
 }
 
 
@@ -495,8 +593,8 @@ int MakeDirectory(char* name)
   /** 4. parent directory에 new dirctory entry를 추가한다. **/ 
   DirEntry* parentDirBlock=malloc(BLOCK_SIZE);
   DevReadBlock(parentBlockNum, (char*)parentDirBlock); // entry를 추가할 parent directory block.
-  strcpy(parentDirBlock[parentFreeEntryIdx].name, newDirName);
   parentDirBlock[parentFreeEntryIdx].inodeNum=newDirInodeNum;
+  strcpy(parentDirBlock[parentFreeEntryIdx].name, newDirName);
   DevWriteBlock(parentBlockNum, (char*)parentDirBlock);
   free(parentDirBlock);
 
@@ -655,5 +753,25 @@ void GetFileNames(char* name, int count, char** nameList){
   while(token!=NULL){
     nameList[i++]=token;
     token=strtok(NULL, "/");
+  }
+}
+
+// descirptor table의 fee entry index를 반환한다. free entry가 없으면 -1 반환.
+int GetFreeDescTableEntryIdx(FileDescTable* pFileDescTable){
+  if(pFileDescTable->numUsedDescEntry==DESC_ENTRY_NUM)
+    return -1;
+  for(int i=0;i<DESC_ENTRY_NUM;i++){
+    if(pFileDescTable->pEntry[i].bUsed==0)
+      return i;
+  }
+}
+
+// file table의 free entry index를 반환한다. free entry가 없으면 -1 반환.
+int GetFreeFileTableEntryIdx(FileTable* pFileTable){
+  if(pFileTable->numUsedFile==MAX_FILE_NUM)
+    return -1;
+  for(int i=0;i<MAX_FILE_NUM;i++){
+    if(pFileTable->pFile[i].bUsed==0)
+      return i;
   }
 }
