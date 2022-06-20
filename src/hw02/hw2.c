@@ -1128,7 +1128,64 @@ Directory* OpenDirectory(char* name)
 
 FileInfo* ReadDirectory(Directory* pDir)
 {
+  static int fileInfoCount=0; // 0~31 : direct block, 32 ~ : indirect block
+  int directBlockIndex;
+  int indirectBlockIndex;
+  int indirectBlockNumber;
+  int dirEntryIndex;
+  int directoryBlockNumber;
+  Inode* pInode=malloc(sizeof(Inode));
+  DirEntry* pEntry=malloc(sizeof(DirEntry));
+  FileInfo* pFileInfo=malloc(sizeof(FileInfo));
+  int count=pInode->allocBlocks;
+  GetInode(pDir->inodeNum, pInode);
 
+  Inode* entryInode = malloc(sizeof(Inode));
+
+  if(fileInfoCount==count){
+    fileInfoCount=0;
+    return NULL;
+  }
+
+  // direct block
+  if(fileInfoCount<NUM_OF_DIRECT_BLOCK_PTR*(BLOCK_SIZE/sizeof(DirEntry))){
+    directBlockIndex=fileInfoCount/NUM_OF_DIRENT_PER_BLK;
+    dirEntryIndex=fileInfoCount%NUM_OF_DIRENT_PER_BLK;
+    directoryBlockNumber=pInode->dirBlockPtr[directBlockIndex];
+
+    GetDirEntry(directoryBlockNumber, dirEntryIndex, pEntry);
+    GetInode(pEntry->inodeNum, entryInode);
+    pFileInfo->filetype=entryInode->type;
+    pFileInfo->inodeNum=pEntry->inodeNum;
+    strcpy(pFileInfo->name, pEntry->name);
+    pFileInfo->numBlocks=entryInode->allocBlocks;
+    pFileInfo->size=entryInode->size;
+
+    fileInfoCount++;
+  }
+  // indirect block
+  else{
+    indirectBlockNumber=pInode->indirectBlockPtr;
+    indirectBlockIndex=(fileInfoCount-(NUM_OF_DIRECT_BLOCK_PTR*NUM_OF_DIRENT_PER_BLK))/NUM_OF_DIRENT_PER_BLK;
+    dirEntryIndex=fileInfoCount%NUM_OF_DIRENT_PER_BLK;
+    directoryBlockNumber=GetIndirectBlockEntry(indirectBlockNumber, indirectBlockIndex);
+
+    GetDirEntry(directoryBlockNumber, dirEntryIndex, pEntry);
+    GetInode(pEntry->inodeNum, entryInode);
+    pFileInfo->filetype=entryInode->type;
+    pFileInfo->inodeNum=pEntry->inodeNum;
+    strcpy(pFileInfo->name, pEntry->name);
+    pFileInfo->numBlocks=entryInode->allocBlocks;
+    pFileInfo->size=entryInode->size;
+
+    fileInfoCount++;
+  }
+
+  free(entryInode);
+  free(pInode);
+  free(pEntry);
+
+  return pFileInfo;
 }
 
 int CloseDirectory(Directory* pDir)
