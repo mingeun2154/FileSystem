@@ -1,7 +1,7 @@
 test : test.o hw1.o hw2.o disk.o
 	gcc test.o hw1.o hw2.o disk.o -o test
-test.o : test.c
-	gcc -c -o test.o test.c
+test.o : testcase.c
+	gcc -c -o test.o testcase.c
 hw1.o : hw1.c
 	gcc -c -o hw1.o hw1.c
 hw2.o : hw2.c

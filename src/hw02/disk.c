@@ -1,3 +1,4 @@
+
 #include <stdio.h>
 #include <stdlib.h>
 #include <fcntl.h>
@@ -8,7 +9,27 @@
 #include <unistd.h>
 #include "disk.h"
 
-int fd; 
+int fd;
+
+
+int diskReadCount = 0;
+int diskWriteCount = 0;
+
+void DevResetDiskAccessCount(void)
+{
+    diskReadCount = diskWriteCount = 0;
+}
+
+int DevGetDiskReadCount(void)
+{
+    return diskReadCount;
+}
+
+int DevGetDiskWriteCount(void)
+{
+    return diskWriteCount;
+}
+
 
 void DevCreateDisk(void)
 {
@@ -17,7 +38,7 @@ void DevCreateDisk(void)
 
 void DevOpenDisk(void)
 {
-	fd = open("MY_DISK", O_RDWR);
+    fd = open("MY_DISK", O_RDWR);
 }
 
 void __DevMoveBlock(int blkno){
@@ -28,12 +49,15 @@ void DevReadBlock(int blkno, char* pBuf)
 {
    __DevMoveBlock(blkno);
    read(fd, pBuf, BLOCK_SIZE);
+   diskReadCount++;
+
 }
 
 void DevWriteBlock(int blkno, char* pBuf)
 {
    __DevMoveBlock(blkno);
    write(fd, pBuf, BLOCK_SIZE);
+   diskWriteCount++;
 }
 
 

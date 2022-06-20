@@ -9,7 +9,7 @@ typedef int BOOL;
 
 #define NUM_OF_DIRENT_PER_BLK   (BLOCK_SIZE / sizeof(DirEntry))
 #define DESC_ENTRY_NUM      (128)
-#define MAX_FILE_NUM        (64)
+#define MAX_FILE_NUM        (128)
 // ----------------------------------------------------------
 
 
