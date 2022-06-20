@@ -11,13 +11,15 @@
 int CreateFileSystemTest(void);
 void MakeDirectoryTest(void);
 void OpenFileTest();
+void WriteFileTest();
 
 int main(void){
   printf("Test start\n");
   CreateFileSystem();
   //CreateFileSystemTest();
   //MakeDirectoryTest();
-  OpenFileTest();
+  //OpenFileTest();
+  WriteFileTest();
 
   return 0;
 }
@@ -214,19 +216,19 @@ void OpenFileTest(){
   int fd1;
   int fd2;
   int fd3;
-  printf("%-30s\t", "OpenFile(/temp1/a.c, OPEN_FLAG_CREATE) ...");
+  printf("%-50s\t", "OpenFile(/temp1/a.c, OPEN_FLAG_CREATE) ...");
   if((fd1=OpenFile("/temp1/a.c", OPEN_FLAG_CREATE))<0){
     printf("/temp1/a.c 실패\n");
     return;
   }
   printf("%10s\n", "OK");
-  printf("%-30s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
+  printf("%-50s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
   if((fd2=OpenFile("temp1/temp2/a.c", OPEN_FLAG_CREATE))<0){
     printf("/temp1/temp2/a.c 실패\n");
     return;
   }
   printf("%10s\n", "OK");
-  printf("%-30s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
+  printf("%-50s\t", "OpenFile(/temp1/temp2/a.c, OPEN_FLAG_CREATE) ...");
   if((fd3=OpenFile("temp1/temp2/a.c", OPEN_FLAG_CREATE))<0){
     printf("/temp1/temp2/a.c 실패\n");
     return;
@@ -235,6 +237,30 @@ void OpenFileTest(){
     printf("/temp1/temp2/a.c 실패\n");
     return;
   }
+  printf("%10s\n", "OK");
+
+}
+
+
+void WriteFileTest(){
+  printf("-------------------------------------------------------");
+  printf("WriteFileTest\n");
+  MakeDirectory("/temp1");
+  MakeDirectory("/temp1/temp2");
+
+  int fd1;
+  int fd2;
+  int fd3;
+  char* pBuff=calloc(BLOCK_SIZE, sizeof(char));
+  strcpy(pBuff, "hello wrold");
+  fd1=OpenFile("/temp1/a.c", OPEN_FLAG_CREATE);
+
+  printf("%-50s\t", "WriteFile(/temp1/a.c, \"helo world\", 20) ...");
+  if(WriteFile(fd1, pBuff, 20)<0){
+    printf("failed\n");
+    return;
+  }
+    
   printf("%10s\n", "OK");
 
 }

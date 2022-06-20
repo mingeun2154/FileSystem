@@ -27,7 +27,7 @@ int GetFreeFileTableEntryIdx(FileTable* pFileTable);
 
 FileDescTable* pFileDescTable;
 FileTable* pFileTable;
-FileSysInfo* pFileSysInfo;
+FileSysInfo* pFileSysInfo; // 필요할때 disk에서 읽고 업데이트 하고, 다시 disk에 쓴다.
 
 
 int OpenFile(const char* name, OpenFlag flag)
@@ -465,10 +465,138 @@ int OpenFile(const char* name, OpenFlag flag)
 
 }
 
-
+// pBuff < 512라고 가정
 int WriteFile(int fileDesc, char* pBuffer, int length)
 {
+  int freeBlockNum;
+  /** 1. fd가 가리키는 file의 inode를 획득한다. **/
+  int inodeNum;
+  int fileTableIndex;
+  fileTableIndex=pFileDescTable->pEntry[fileDesc].fileTableIndex;
+  Inode* pInode=malloc(sizeof(Inode));
+  inodeNum=pFileTable->pFile[fileTableIndex].inodeNum;
+  GetInode(inodeNum, pInode);
+  /** 2. pBuffer의 data를 file에 쓴다. **/
+  int fileOffset; // 쓰기를 진행할 파일의 현재 offset.
+  int startBlockIndex;
+  int indirectBlockIndex=-1;
+  int startBlockNumber; // 쓰기를 시작할 block number
+  int startBlockOffset; // 쓰기를 시작할 block offset
+  /** pBuffer가 512Bytes 보다 클때
+  * int blockCount; // pBuffer를 쓰기 위해 필요한 block 개수.
+  * blockCount=length/BLOCK_SIZE;
+  * if((length%BLOCK_SIZE)!=0)
+  *   blockCount++;
+  **/
+  fileOffset=pFileTable->pFile[fileTableIndex].fileOffset;
+  startBlockOffset=fileOffset % BLOCK_SIZE;
 
+  /** 2.1 offset==0 **/
+  if(fileOffset==0){
+    /** size==0 : 파일에 처음으로 data를 쓰는 경우 **/
+    if(pInode->size==0){ 
+      if(startBlockNumber=GetFreeBlockNum()<0)
+        return -1;
+      /** data 기록 **/
+      char* pBlock=calloc(BLOCK_SIZE, sizeof(char));
+      strncpy(pBlock, pBuffer, length);
+      DevWriteBlock(startBlockNumber, pBlock);
+      free(pBlock);
+      /** Update File Object in File Table **/
+      pFileTable->pFile[fileTableIndex].fileOffset=length;
+      /** Update inode **/
+      pInode->allocBlocks=1;
+      pInode->dirBlockPtr[0]=startBlockNumber;
+      pInode->size=length;
+      PutInode(inodeNum, pInode);
+      /** Update FileSysInfo **/
+      DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+      pFileSysInfo->numAllocBlocks++;
+      pFileSysInfo->numFreeBlocks--;
+      /** Update Bytemap **/
+      SetBlockBytemap(startBlockNumber);
+
+      free(pInode);
+      return length;
+    }
+    /** 기존의 data를 덮어쓴다. **/
+    else{
+      startBlockNumber=pInode->dirBlockPtr[0];
+      /** data 기록 **/
+      char* pBlock = malloc(BLOCK_SIZE);
+      DevReadBlock(startBlockNumber, pBlock);
+      strncpy(pBlock, pBuffer, length);
+      DevWriteBlock(startBlockNumber, pBlock);
+      free(pBlock);
+      /** Update File Object in File Table **/
+      pFileTable->pFile[fileTableIndex].fileOffset=length;
+      /** Update inode **/
+      if(length>(pInode->size))
+        pInode->size=length;
+      PutInode(inodeNum, pInode);
+
+      free(pInode);
+      return length;
+    }
+  }
+  /** 2-2. fileOffset!=0 **/
+  else{
+    startBlockIndex=fileOffset/BLOCK_SIZE;
+    if(startBlockIndex>NUM_OF_DIRECT_BLOCK_PTR){
+      indirectBlockIndex=startBlockIndex-NUM_OF_DIRECT_BLOCK_PTR-1;
+      startBlockNumber=GetIndirectBlockEntry(pInode->indirectBlockPtr, indirectBlockIndex);
+    }
+    // startBlockOffset+length<=BLOCK_SIZE : write가 하나의 block에서 실행된다.
+    if(startBlockOffset+length<BLOCK_SIZE){
+      char* pBlock=malloc(BLOCK_SIZE);
+      DevReadBlock(startBlockNumber, pBlock);
+      strncpy(pBlock+startBlockOffset, pBuffer, length);
+      /** Update file object **/
+      pFileTable->pFile[fileTableIndex].fileOffset+=length;
+      /** Update inode **/
+      pInode->size+=length;
+      PutInode(inodeNum, pInode);
+
+      free(pInode);
+      return length;
+    }
+    // startBlockOffset+length>BLOCK_SIZE : data block 추가
+    else{
+      // indirect block 추가
+      if(indirectBlockIndex>0){
+
+      }
+      // direct block 추가
+      else{
+        int nextDirectBlockIndex=0;
+        while(pInode->dirBlockPtr[nextDirectBlockIndex]!=0)
+          nextDirectBlockIndex++;
+        char* pBlock = malloc(BLOCK_SIZE);
+        DevReadBlock(startBlockNumber, pBlock);
+        strncpy(pBlock+fileOffset, pBuffer, BLOCK_SIZE-startBlockOffset+1);
+        // new block
+        int editionalBlockNum=GetFreeBlockNum();
+        char* editionalBlock=calloc(BLOCK_SIZE, sizeof(char));
+        strncpy(editionalBlock, pBuffer+(BLOCK_SIZE-fileOffset), length-(BLOCK_SIZE-fileOffset));
+        /** Update File Object in File Table **/
+        pFileTable->pFile[fileTableIndex].fileOffset+=length;
+        /** Update inode **/
+        pInode->allocBlocks+=1;
+        pInode->dirBlockPtr[nextDirectBlockIndex]=editionalBlockNum;
+        pInode->size+=length;
+        PutInode(inodeNum, pInode);
+        /** Update FileSysInfo **/
+        DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+        pFileSysInfo->numAllocBlocks++;
+        pFileSysInfo->numFreeBlocks--;
+        /** Update Bytemap **/
+        SetBlockBytemap(editionalBlockNum);
+
+        free(pInode);
+        return length;
+      }
+    }
+  }
 }
 
 
@@ -833,12 +961,18 @@ void CreateFileSystem(void)
 
 void OpenFileSystem(void)
 {
-
+  DevOpenDisk();
+  pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
+  pFileTable=calloc(sizeof(FileTable), sizeof(char));
 }
 
 void CloseFileSystem(void)
 {
-
+  DevCloseDisk();
+  if(pFileDescTable!=NULL)
+    free(pFileDescTable);
+  if(pFileTable!=NULL)
+    free(pFileTable);
 }
 
 Directory* OpenDirectory(char* name)
