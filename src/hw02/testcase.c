@@ -90,7 +90,7 @@ void TestCase1(void)
         sprintf(dirName, "/etc/dev%d", i);
         RemoveDirectory(dirName);
     }
-    ListDirContents("/etc");
+    //ListDirContents("/etc");
 }
 
 

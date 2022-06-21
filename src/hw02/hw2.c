@@ -781,9 +781,11 @@ int MakeDirectory(char* name)
       pFileSysInfo->numFreeBlocks--;
       SetBlockBytemap(newDirBlockNum);
       parentBlockNum=GetFreeBlockNum();
+      SetBlockBytemap(parentBlockNum);
       parentInode->dirBlockPtr[blockPtrIdx]=parentBlockNum;
+      parentInode->allocBlocks++;
       // 새로 할당한 direct block의 모든 entry를 invalid로 초기화한다.
-      DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
+      DirEntry* newBlockEntry=calloc(BLOCK_SIZE, sizeof(char));
       for(int i=0;i<DIR_ENTRY_NUM;i++)
         newBlockEntry[i].inodeNum=INVALID_ENTRY;
       DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
@@ -813,9 +815,12 @@ int MakeDirectory(char* name)
       int indirectBlockNum = GetFreeBlockNum(); /** indirect block number, 새로운 directory block을 가리키는 포인터들이다. **/
       SetBlockBytemap(indirectBlockNum); 
       parentBlockNum=GetFreeBlockNum(); /** 새로운 directory block 여기에 entry가 저장된다 **/
+      parentFreeEntryIdx=0;
+      SetBlockBytemap(parentBlockNum);
       parentInode->indirectBlockPtr=indirectBlockNum; 
+      parentInode->allocBlocks++;
       // 새로 할당한 directory block의 모든 entry를 invalid로 초기화한다.
-      DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
+      DirEntry* newBlockEntry=calloc(BLOCK_SIZE, sizeof(char));
       for(int i=0;i<DIR_ENTRY_NUM;i++)
         newBlockEntry[i].inodeNum=INVALID_ENTRY;
       DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
@@ -825,30 +830,53 @@ int MakeDirectory(char* name)
 
       free(indirectBlockEntry);
       free(newBlockEntry);
-      parentFreeEntryIdx=0;
     }
-  }
-  // 3-3-2. indirect block에서 free entry 탐색.
-  if(isFound==0){
-    char* indirectBlockPtrs=malloc(BLOCK_SIZE);
-    DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
-    int blockPtr; // block pointer = block number
-    for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
-      blockPtr=indirectBlockPtrs[i];
-      if(isFound==1)
-        break;
-      for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
-        if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
-          isFound=1;
-          parentInodeNum=pEntry->inodeNum;
-          GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+    else{
+      // 3-3-2. 이미 존재하는 indirect block에서 free entry 탐색.
+      int* indirectBlockPtrs=malloc(BLOCK_SIZE);
+      DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
+      int blockPtr; // block pointer = block number
+      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+        if(isFound==1)
           break;
+        // directory block 추가 할당
+        if(indirectBlockPtrs[i]==0){
+          isFound=1;
+          pFileSysInfo->numAllocBlocks++;
+          pFileSysInfo->numFreeBlocks--;
+          SetBlockBytemap(newDirBlockNum);
+          parentBlockNum=GetFreeBlockNum(); /** 새로운 directory block. 여기에 entry가 저장된다 **/
+          parentFreeEntryIdx=0;
+          SetBlockBytemap(parentBlockNum);
+          parentInode->allocBlocks++;
+          indirectBlockPtrs[i]=parentBlockNum;
+          // 새로 할당한 directory block의 모든 entry를 invalid로 초기화한다.
+          DirEntry* newBlockEntry=calloc(BLOCK_SIZE, sizeof(char));
+          for(int i=0;i<DIR_ENTRY_NUM;i++)
+            newBlockEntry[i].inodeNum=INVALID_ENTRY;
+          DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
+          DevWriteBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
+
+          free(newBlockEntry);
         }
-        else
-          continue;
+        // 이미 존재하는 block의 free entry 탐색.
+        else{
+          blockPtr=indirectBlockPtrs[i];
+          parentBlockNum=blockPtr;
+          for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+            if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
+              isFound=1;
+              parentFreeEntryIdx=entryIdx;
+              break;
+            }
+            else
+              continue;
+          }
+        }
       }
+      free(indirectBlockPtrs);
     }
-    free(indirectBlockPtrs);
+    
   }
 
   //printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
@@ -860,26 +888,30 @@ int MakeDirectory(char* name)
   strcpy(parentDirBlock[parentFreeEntryIdx].name, newDirName);
   DevWriteBlock(parentBlockNum, (char*)parentDirBlock);
   free(parentDirBlock);
+  // Update parent inode 
 
   /** 5. new directory block 생성, 설정 **/
   DirEntry* newDirBlock = malloc(BLOCK_SIZE);
   strcpy(newDirBlock[CURRENT_DIR_ENTRY_IDX].name, CURRENT_DIRCTORY_NAME);
-  newDirBlock[CURRENT_DIR_ENTRY_IDX].inodeNum=parentInodeNum;
+  newDirBlock[CURRENT_DIR_ENTRY_IDX].inodeNum=newDirInodeNum;
   strcpy(newDirBlock[PARENT_DIR_ENTRY_IDX].name, PARENT_DIRECTORY_NAME);
-  newDirBlock[PARENT_DIR_ENTRY_IDX].inodeNum=newDirInodeNum;
+  newDirBlock[PARENT_DIR_ENTRY_IDX].inodeNum=parentInodeNum;
   for(int i=PARENT_DIR_ENTRY_IDX+1;i<BLOCK_SIZE/sizeof(DirEntry);i++)
     newDirBlock[i].inodeNum=INVALID_ENTRY;
   DevWriteBlock(newDirBlockNum, (char*)newDirBlock);
 
   /** 6. new direcotry inode 생성 **/
-  Inode* newDirInode=malloc(sizeof(Inode));
+  Inode* newDirInode=calloc(sizeof(Inode), sizeof(char));
   GetInode(newDirInodeNum, newDirInode);
   newDirInode->allocBlocks=1;
   newDirInode->dirBlockPtr[0]=newDirBlockNum;
+  for(int i=1;i<NUM_OF_DIRECT_BLOCK_PTR;i++)
+    newDirInode->dirBlockPtr[i]=0;
   newDirInode->indirectBlockPtr=0;
   newDirInode->size=(newDirInode->allocBlocks)*BLOCK_SIZE;
   newDirInode->type=FILE_TYPE_DIR;
   PutInode(newDirInodeNum, newDirInode);
+  parentInode->size=parentInode->allocBlocks*BLOCK_SIZE;
   PutInode(parentInodeNum, parentInode);
 
   /** 7. Update metadata **/
@@ -1149,6 +1181,7 @@ void CreateFileSystem(void)
 void OpenFileSystem(void)
 {
   DevOpenDisk();
+  CreateFileSystem();
   pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
   pFileTable=calloc(sizeof(FileTable), sizeof(char));
 }
@@ -1261,7 +1294,7 @@ Directory* OpenDirectory(char* name)
       else{
         Inode* pInode = malloc(sizeof(Inode));
         GetInode(pEntry->inodeNum, pInode);
-        if((strcmp(pEntry->name, openDirName)==0)&&((pInode->type)==FILE_TYPE_FILE)){
+        if((strcmp(pEntry->name, openDirName)==0)&&((pInode->type)==FILE_TYPE_DIR)){
           isExist=1;
           isFound=1;
           break;
@@ -1286,7 +1319,7 @@ Directory* OpenDirectory(char* name)
         else{
           Inode* pInode=malloc(sizeof(Inode));
           GetInode(pEntry->inodeNum, pInode);
-          if((strcmp(pEntry->name, openDirName)==0) && (pInode->type==FILE_TYPE_FILE)){
+          if((strcmp(pEntry->name, openDirName)==0) && (pInode->type==FILE_TYPE_DIR)){
             isExist=1;
             isFound=1;
             break;
@@ -1312,61 +1345,69 @@ FileInfo* ReadDirectory(Directory* pDir)
   static int fileInfoCount=0; // 0~31 : direct block, 32 ~ : indirect block
   int directBlockIndex;
   int indirectBlockIndex;
-  int indirectBlockNumber;
+  int* indirectBlock;
   int dirEntryIndex;
   int directoryBlockNumber;
   Inode* pInode=malloc(sizeof(Inode));
   DirEntry* pEntry=malloc(sizeof(DirEntry));
   FileInfo* pFileInfo=malloc(sizeof(FileInfo));
-  int count=pInode->allocBlocks;
+
   GetInode(pDir->inodeNum, pInode);
+  int count=pInode->allocBlocks;
 
   Inode* entryInode = malloc(sizeof(Inode));
 
-  if(fileInfoCount==count){
-    fileInfoCount=0;
-    return NULL;
-  }
-
-  // direct block
-  if(fileInfoCount<NUM_OF_DIRECT_BLOCK_PTR*(BLOCK_SIZE/sizeof(DirEntry))){
+  /** Read from direct block. **/
+  if(fileInfoCount<NUM_OF_DIRECT_BLOCK_PTR*NUM_OF_DIRENT_PER_BLK){
     directBlockIndex=fileInfoCount/NUM_OF_DIRENT_PER_BLK;
     dirEntryIndex=fileInfoCount%NUM_OF_DIRENT_PER_BLK;
     directoryBlockNumber=pInode->dirBlockPtr[directBlockIndex];
-
-    GetDirEntry(directoryBlockNumber, dirEntryIndex, pEntry);
+    if(GetDirEntry(directoryBlockNumber, dirEntryIndex, pEntry)<0){
+      fileInfoCount=0;
+      free(entryInode);
+      free(pInode);
+      free(pEntry);
+      return NULL;
+    }
     GetInode(pEntry->inodeNum, entryInode);
     pFileInfo->filetype=entryInode->type;
     pFileInfo->inodeNum=pEntry->inodeNum;
     strcpy(pFileInfo->name, pEntry->name);
     pFileInfo->numBlocks=entryInode->allocBlocks;
-    pFileInfo->size=entryInode->size;
+    pFileInfo->size= entryInode->size;
 
     fileInfoCount++;
+    free(entryInode);
+    free(pInode);
+    free(pEntry);
+    return pFileInfo;
   }
-  // indirect block
+  /** Read from indirect block. **/
   else{
-    indirectBlockNumber=pInode->indirectBlockPtr;
     indirectBlockIndex=(fileInfoCount-(NUM_OF_DIRECT_BLOCK_PTR*NUM_OF_DIRENT_PER_BLK))/NUM_OF_DIRENT_PER_BLK;
-    dirEntryIndex=fileInfoCount%NUM_OF_DIRENT_PER_BLK;
-    directoryBlockNumber=GetIndirectBlockEntry(indirectBlockNumber, indirectBlockIndex);
-
-    GetDirEntry(directoryBlockNumber, dirEntryIndex, pEntry);
+    directBlockIndex=(fileInfoCount-(NUM_OF_DIRECT_BLOCK_PTR*NUM_OF_DIRENT_PER_BLK))%NUM_OF_DIRENT_PER_BLK;
+    directoryBlockNumber=GetIndirectBlockEntry(pInode->indirectBlockPtr, indirectBlockIndex);
+    if(GetDirEntry(directoryBlockNumber, directBlockIndex, pEntry)<0){
+      fileInfoCount=0;
+      free(entryInode);
+      free(pInode);
+      free(pEntry);
+      return NULL;
+    }
     GetInode(pEntry->inodeNum, entryInode);
-    pFileInfo->filetype=entryInode->type;
+    pFileInfo->filetype=pInode->type;
     pFileInfo->inodeNum=pEntry->inodeNum;
     strcpy(pFileInfo->name, pEntry->name);
     pFileInfo->numBlocks=entryInode->allocBlocks;
     pFileInfo->size=entryInode->size;
 
     fileInfoCount++;
+    free(entryInode);
+    free(pInode);
+    free(pEntry);
+    return pFileInfo;
   }
 
-  free(entryInode);
-  free(pInode);
-  free(pEntry);
-
-  return pFileInfo;
 }
 
 int CloseDirectory(Directory* pDir)
