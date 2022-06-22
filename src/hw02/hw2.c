@@ -37,12 +37,14 @@ int OpenFile(const char* name, OpenFlag flag)
   if(freeInodeNum<0)
     return -1; // free inode 없음
   
+  char notConstName[MAX_NAME_LEN];
+  strcpy(notConstName, name);
   /** 2. parent directory 탐색 **/
   BOOL isExist=0; // 이미 존재하는 파일이면 1, 없으면 0
 
-  int count=CountSLASH(name);
+  int count=CountSLASH(notConstName);
   char** nameList=calloc(count, sizeof(char*));
-  GetFileNames(name, count, nameList);
+  GetFileNames(notConstName, count, nameList);
   char* openFileName=nameList[count-1];
   BOOL isFound;
 
@@ -173,16 +175,19 @@ int OpenFile(const char* name, OpenFlag flag)
     free(indirectBlockPtrs);
   }
   // 3-2. direct block에서 free entry를 찾는다.
-  if(isFound==0){
+  if(isExist==0||isFound==0){
     for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
       if(isFound==1)
         break;
       // direct block을 추가적으로 할당해야 하는 경우.
       if(parentInode->dirBlockPtr[blockPtrIdx]==0){
         isFound=1;
+        pFileSysInfo->numAllocBlocks++;
+        pFileSysInfo->numFreeBlocks--;
         parentBlockNum=GetFreeBlockNum();
         SetBlockBytemap(parentBlockNum);
         parentInode->dirBlockPtr[blockPtrIdx]=parentBlockNum;
+        parentInode->allocBlocks++;
         // 새로 할당한 direct block의 모든 entry를 invalid로 초기화한다.
         DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
         for(int i=0;i<DIR_ENTRY_NUM;i++)
@@ -206,51 +211,62 @@ int OpenFile(const char* name, OpenFlag flag)
   }
   // 3-3. indirect block에서 free entry를 찾는다.
   // 3-3-1. indirect block이 아직 할당 안 되어 있었을 경우
-  if(isFound==0){
+  if(isExist==0&&isFound==0){
     if(parentInode->indirectBlockPtr==0){
       isFound=1;
+      pFileSysInfo->numAllocBlocks++;
+      pFileSysInfo->numFreeBlocks--;
       int indirectBlockNum = GetFreeBlockNum(); /** indirect block number, 새로운 directory block을 가리키는 포인터들이다. **/
       SetBlockBytemap(indirectBlockNum); 
       parentInode->indirectBlockPtr=indirectBlockNum; 
-      // 새로 할당한 directory block의 모든 entry를 invalid로 초기화한다.
-      DirEntry* newBlockEntry=malloc(BLOCK_SIZE);
-      for(int i=0;i<DIR_ENTRY_NUM;i++)
-        newBlockEntry[i].inodeNum=INVALID_ENTRY;
-      DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
       int* indirectBlockEntry=calloc(NUM_OF_INDIRECT_BLOCK_PTR, sizeof(int*));
       indirectBlockEntry[0]=parentBlockNum;
       DevWriteBlock(indirectBlockNum, (char*)indirectBlockEntry);
 
       free(indirectBlockEntry);
-      free(newBlockEntry);
       parentFreeEntryIdx=0;
     }
-  }
-  // 3-3-2. indirect block에서 free entry 탐색.
-  if(isFound==0){
-    char* indirectBlockPtrs=malloc(BLOCK_SIZE);
-    DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
-    int blockPtr; // block pointer = block number
-    for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
-      blockPtr=indirectBlockPtrs[i];
-      if(isFound==1)
-        break;
-      for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
-        if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
-          isFound=1;
-          parentInodeNum=pEntry->inodeNum;
-          GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+    else{
+      // 3-3-2. 이미 존재하는 indirect block에서 free entry 탐색.
+      int* indirectBlockPtrs=malloc(BLOCK_SIZE);
+      DevReadBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
+      int blockPtr; // block pointer = block number
+      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+        blockPtr=indirectBlockPtrs[i];
+        if(isFound==1)
           break;
+        // directory block 추가 할당
+        if(indirectBlockPtrs[i]==0){
+          isFound=1;
+          pFileSysInfo->numAllocBlocks++;
+          pFileSysInfo->numFreeBlocks--;
+          parentBlockNum=GetFreeBlockNum(); /** 새로운 directory block. 여기에 entry가 저장된다 **/
+          parentFreeEntryIdx=0;
+          SetBlockBytemap(parentBlockNum);
+          parentInode->allocBlocks++;
+          indirectBlockPtrs[i]=parentBlockNum;
+          DevWriteBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
         }
-        else
-          continue;
+        else{
+          for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+            if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
+              isFound=1;
+              parentInodeNum=pEntry->inodeNum;
+              GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+              break;
+            }
+            else
+              continue;
+          }
+        }
       }
+      free(indirectBlockPtrs);
+      
     }
-    free(indirectBlockPtrs);
   }
 
   // 새 파일이 추가될 parent block number와 parent block entry 출력
-  // printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
+  printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
 
   // printf("파일 생성\t");
   /** 4-1. 존재하지 않는 file 생성. parent directory에 open file을 entry로 추가 **/
@@ -737,9 +753,7 @@ int MakeDirectory(char* name)
       else{
         Inode* pInode = malloc(sizeof(Inode));
         GetInode(pEntry->inodeNum, pInode);
-        //printf("%s\t", pEntry->name);
         if((strcmp(pEntry->name, newDirName)==0)&&((pInode->type)==FILE_TYPE_DIR)){
-          //printf("%-6s", "#165");
           return -1;
         }
         free(pInode);
@@ -834,7 +848,7 @@ int MakeDirectory(char* name)
     else{
       // 3-3-2. 이미 존재하는 indirect block에서 free entry 탐색.
       int* indirectBlockPtrs=malloc(BLOCK_SIZE);
-      DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
+      DevReadBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
       int blockPtr; // block pointer = block number
       for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
         if(isFound==1)
@@ -952,7 +966,7 @@ int RemoveDirectory(char* name)
   DirEntry* pEntry=malloc(sizeof(DirEntry));
   GetInode(parentInodeNum, parentInode);
 
-  /** 2. new directory entry가 추가될 parent directory의 inode를 찾는다 **/
+  /** 2. 제거될 target의 parent directory의 inode를 찾는다 **/
   // 경로에 있는 이름들을 탐색
   isFound=0;
   for(int i=0;i<count-1;i++){
@@ -1125,7 +1139,9 @@ void CreateFileSystem(void)
   
   FileSysInit(); // 디스크 초기화
   freeBlockNum=GetFreeBlockNum(); // root directory block이 저장될 data region block number.
+  SetBlockBytemap(freeBlockNum);
   freeInodeNum=GetFreeInodeNum(); // root directory의 inode number.
+  SetInodeBytemap(freeInodeNum);
 
 /************************************* data region 수정 *************************************/
   DirEntry* pDirBlock = malloc(BLOCK_SIZE); // directory block는 directory entry의 배열이다
@@ -1136,7 +1152,7 @@ void CreateFileSystem(void)
   pDirBlock[CURRENT_DIR_ENTRY_IDX].inodeNum=freeInodeNum; // inode number 저장.
   for(int i=1;i<BLOCK_SIZE/sizeof(DirEntry);i++)
     pDirBlock[i].inodeNum=INVALID_ENTRY;
-  DevWriteBlock(freeBlockNum, (char*)pDirBlock); // 빈 block(block7)에 root directory가 저장된다.
+  DevWriteBlock(freeBlockNum, (char*)pDirBlock); // 빈 block(block11)에 root directory가 저장된다.
   free(pDirBlock);
 
 /************************************* inode 생성 *************************************/
@@ -1146,42 +1162,35 @@ void CreateFileSystem(void)
   pInode->size = (pInode->allocBlocks * BLOCK_SIZE);
   pInode->type=FILE_TYPE_DIR;
   pInode->dirBlockPtr[0]=freeBlockNum;
-  //pInode->indirectBlockPtr=INVALID_ENTRY;
   PutInode(freeInodeNum, pInode);
   free(pInode);
 
 /*************************************** FileSysInfo 초기화 ***************************************/
-  FileSysInfo* pFSIBlock = malloc(BLOCK_SIZE);
+  pFileSysInfo = malloc(BLOCK_SIZE);
   int numberOfBlocks=FS_DISK_CAPACITY/BLOCK_SIZE; // 디스크를 구성하는 block 총 개수 (512)
-  pFSIBlock->blocks=numberOfBlocks; 
-  pFSIBlock->rootInodeNum=freeInodeNum;
-  pFSIBlock->rootInodeNum=freeInodeNum;
-  pFSIBlock->diskCapacity=FS_DISK_CAPACITY;
-  pFSIBlock->numAllocBlocks=0;
-  pFSIBlock->numFreeBlocks=numberOfBlocks-(INODELIST_BLOCK_FIRST+INODELIST_BLOCKS); // 512-7
-  pFSIBlock->numAllocInodes=0;
-  pFSIBlock->blockBytemapBlock=BLOCK_BYTEMAP_BLOCK_NUM;
-  pFSIBlock->inodeBytemapBlock=INODE_BYTEMAP_BLOCK_NUM;
-  pFSIBlock->inodeListBlock=INODELIST_BLOCK_FIRST; // 3
-  pFSIBlock->dataRegionBlock=INODELIST_BLOCK_FIRST+INODELIST_BLOCKS; // 3+4
+  pFileSysInfo->blocks=numberOfBlocks; 
+  pFileSysInfo->rootInodeNum=freeInodeNum;
+  pFileSysInfo->diskCapacity=FS_DISK_CAPACITY;
+  pFileSysInfo->numAllocBlocks=0;
+  pFileSysInfo->numFreeBlocks=numberOfBlocks-(INODELIST_BLOCK_FIRST+INODELIST_BLOCKS); // 512-11
+  pFileSysInfo->numAllocInodes=0;
+  pFileSysInfo->blockBytemapBlock=BLOCK_BYTEMAP_BLOCK_NUM;
+  pFileSysInfo->inodeBytemapBlock=INODE_BYTEMAP_BLOCK_NUM;
+  pFileSysInfo->inodeListBlock=INODELIST_BLOCK_FIRST; // 3
+  pFileSysInfo->dataRegionBlock=INODELIST_BLOCK_FIRST+INODELIST_BLOCKS; // 3+4
 
 /****************************************** metadata 수정 ******************************************/
   /** FileSysInfo 수정 (root directory 추가) **/
-  pFSIBlock->numAllocBlocks++;
-  pFSIBlock->numFreeBlocks--;
-  pFSIBlock->numAllocInodes++;
-  DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFSIBlock);
-  free(pFSIBlock);
-
-  /** bytemap 수정**/
-  SetBlockBytemap(freeBlockNum);
-  SetInodeBytemap(freeInodeNum);
+  pFileSysInfo->numAllocBlocks++;
+  pFileSysInfo->numFreeBlocks--;
+  pFileSysInfo->numAllocInodes++;
+  DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+  free(pFileSysInfo);
 }
 
 void OpenFileSystem(void)
 {
   DevOpenDisk();
-  CreateFileSystem();
   pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
   pFileTable=calloc(sizeof(FileTable), sizeof(char));
 }

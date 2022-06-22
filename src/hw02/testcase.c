@@ -90,7 +90,7 @@ void TestCase1(void)
         sprintf(dirName, "/etc/dev%d", i);
         RemoveDirectory(dirName);
     }
-    //ListDirContents("/etc");
+    ListDirContents("/etc");
 }
 
 
@@ -120,7 +120,7 @@ void TestCase2(void)
     {
         memset(dirName, 0, MAX_NAME_LEN);
         sprintf(dirName, "/home/u%d", i);
-        ListDirContents(dirName);
+        //ListDirContents(dirName);
     }
 }
 
