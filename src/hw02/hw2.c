@@ -37,6 +37,8 @@ int OpenFile(const char* name, OpenFlag flag)
   if(freeInodeNum<0)
     return -1; // free inode 없음
   
+  pFileSysInfo=malloc(BLOCK_SIZE);
+  DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
   char notConstName[MAX_NAME_LEN];
   strcpy(notConstName, name);
   /** 2. parent directory 탐색 **/
@@ -68,13 +70,11 @@ int OpenFile(const char* name, OpenFlag flag)
         if(isFound==1)
           break;
         if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){ // invalid entry
-          //printf("%d,%d:(%s, %s)", parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry->name, nameList[i]);
           continue;
         }
         else{
           if(strcmp(pEntry->name, nameList[i])==0){
             isFound=1;
-            //printf("%d,%d:(%s, %s)", parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry->name, nameList[i]); // nameList[i]를 찾은 위치
             parentInodeNum=pEntry->inodeNum;
             GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
             break;
@@ -112,7 +112,9 @@ int OpenFile(const char* name, OpenFlag flag)
     }
 
     if(isFound==0){ // 유효하지 않은 경로(중간에 존재하지 않는 directory가 있다)
-      printf("%-6s", "#139");
+      free(nameList);
+      free(parentInode);
+      free(pEntry);
       return -1;
     }
   }
@@ -186,6 +188,7 @@ int OpenFile(const char* name, OpenFlag flag)
         pFileSysInfo->numFreeBlocks--;
         parentBlockNum=GetFreeBlockNum();
         SetBlockBytemap(parentBlockNum);
+        parentFreeEntryIdx=0;
         parentInode->dirBlockPtr[blockPtrIdx]=parentBlockNum;
         parentInode->allocBlocks++;
         // 새로 할당한 direct block의 모든 entry를 invalid로 초기화한다.
@@ -194,7 +197,6 @@ int OpenFile(const char* name, OpenFlag flag)
           newBlockEntry[i].inodeNum=INVALID_ENTRY;
         DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
         free(newBlockEntry);
-        parentFreeEntryIdx=0;
         break;
       }
       for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
@@ -218,12 +220,21 @@ int OpenFile(const char* name, OpenFlag flag)
       pFileSysInfo->numFreeBlocks--;
       int indirectBlockNum = GetFreeBlockNum(); /** indirect block number, 새로운 directory block을 가리키는 포인터들이다. **/
       SetBlockBytemap(indirectBlockNum); 
+      parentBlockNum=GetFreeBlockNum(); /** new file entry가 저장될 block의 번호. **/
+      parentFreeEntryIdx=0;
+      SetBlockBytemap(parentBlockNum); 
+      parentInode->allocBlocks++;
       parentInode->indirectBlockPtr=indirectBlockNum; 
+      // 새로 할당한 directory block의 모든 entry를 invalid로 초기화한다.
+      DirEntry* newBlockEntry=calloc(BLOCK_SIZE, sizeof(char));
+      for(int i=0;i<DIR_ENTRY_NUM;i++)
+        newBlockEntry[i].inodeNum=INVALID_ENTRY;
       int* indirectBlockEntry=calloc(NUM_OF_INDIRECT_BLOCK_PTR, sizeof(int*));
       indirectBlockEntry[0]=parentBlockNum;
       DevWriteBlock(indirectBlockNum, (char*)indirectBlockEntry);
 
       free(indirectBlockEntry);
+      free(newBlockEntry);
       parentFreeEntryIdx=0;
     }
     else{
@@ -232,7 +243,6 @@ int OpenFile(const char* name, OpenFlag flag)
       DevReadBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
       int blockPtr; // block pointer = block number
       for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
-        blockPtr=indirectBlockPtrs[i];
         if(isFound==1)
           break;
         // directory block 추가 할당
@@ -245,14 +255,24 @@ int OpenFile(const char* name, OpenFlag flag)
           SetBlockBytemap(parentBlockNum);
           parentInode->allocBlocks++;
           indirectBlockPtrs[i]=parentBlockNum;
+          PutInode(parentInodeNum, parentInode);
+          // 새로 할당한 directory block의 모든 entry를 invalid로 초기화한다.
+          DirEntry* newBlockEntry=calloc(BLOCK_SIZE, sizeof(char));
+          for(int i=0;i<DIR_ENTRY_NUM;i++)
+            newBlockEntry[i].inodeNum=INVALID_ENTRY;
+          DevWriteBlock(parentBlockNum, (char*)newBlockEntry);
           DevWriteBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
+
+          free(newBlockEntry);
         }
+        // 이미 존재하는 block에서 free entry 탐색.
         else{
+          blockPtr=indirectBlockPtrs[i];
+          parentBlockNum=blockPtr;
           for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
             if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
               isFound=1;
-              parentInodeNum=pEntry->inodeNum;
-              GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+              parentFreeEntryIdx=entryIdx;
               break;
             }
             else
@@ -266,7 +286,7 @@ int OpenFile(const char* name, OpenFlag flag)
   }
 
   // 새 파일이 추가될 parent block number와 parent block entry 출력
-  printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
+  //printf("(%d,%d)\n", parentBlockNum, parentFreeEntryIdx);
 
   // printf("파일 생성\t");
   /** 4-1. 존재하지 않는 file 생성. parent directory에 open file을 entry로 추가 **/
@@ -284,6 +304,7 @@ int OpenFile(const char* name, OpenFlag flag)
     pInode->type=FILE_TYPE_FILE;
     // allocblocks, dirBlockPtr, indirectBlockPtr, size는 모두 0이므로 수정할 필요 없음.
     PutInode(freeInodeNum, pInode);
+    PutInode(parentInodeNum, parentInode);
     SetInodeBytemap(freeInodeNum);
     free(pInode);
 
@@ -955,7 +976,7 @@ int RemoveDirectory(char* name)
   int count=CountSLASH(name);
   char** nameList=calloc(count, sizeof(char*));
   GetFileNames(name, count, nameList);
-  char* openDirName=nameList[count-1];
+  char* targetDirName=nameList[count-1];
   BOOL isFound;
 
   int parentInodeNum=ROOT_INODE_NUM;
@@ -979,19 +1000,16 @@ int RemoveDirectory(char* name)
         if(isFound==1)
           break;
         if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){ // invalid entry
-          //printf("%d,%d:(%s, %s)", parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry->name, nameList[i]);
           continue;
         }
         else{
           if(strcmp(pEntry->name, nameList[i])==0){
             isFound=1;
-            //printf("%d,%d:(%s, %s)", parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry->name, nameList[i]); // nameList[i]를 찾은 위치
             parentInodeNum=pEntry->inodeNum;
             GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
             break;
           }
           else{
-            //printf("strcmp:%d (%s,%s) ", strcmp(pEntry->name, nameList[i]), pEntry->name, nameList[i]);
             continue;
           }
         }
@@ -1023,73 +1041,80 @@ int RemoveDirectory(char* name)
     }
 
     if(isFound==0){ // 유효하지 않은 경로(중간에 존재하지 않는 directory가 있다)
-      //printf("%-6s", "#139");
       free(nameList);
       free(parentInode);
       free(pEntry);
       return -1;
     }
-  }
+  } // 제거할 target이 entry로 있는 parent directory 찾음.
+
   /** 3-1. 이미 존재하는 파일인지 확인 **/
-  // direct block 에서 중복 확인
-  for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
-    if(isExist==1)
-      break;
-    if(parentInode->dirBlockPtr[blockPtrIdx]==0){
-      continue;
-    }
-    for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
-      if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){
-        continue;
-      }
-      else{
-        Inode* pInode = malloc(sizeof(Inode));
-        GetInode(pEntry->inodeNum, pInode);
-        if((strcmp(pEntry->name, openDirName)==0)&&((pInode->type)==FILE_TYPE_FILE)){
-          isExist=1;
-          isFound=1;
-          targetIndex=entryIdx;
+  if(isExist==0){
+    // indirect block이 존재하는 경우, indirect block 에서 중복 확인
+    if((isExist==0)&&(parentInode->indirectBlockPtr!=0)){
+      int* indirectBlockPtrs=malloc(BLOCK_SIZE);
+      DevReadBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
+      int blockPtr; // block pointer = block number
+      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+        if(isExist==1)
           break;
+        blockPtr=indirectBlockPtrs[i];
+        for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+          if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
+            continue;
+          }
+          else{
+            Inode* pInode=malloc(sizeof(Inode));
+            GetInode(pEntry->inodeNum, pInode);
+            if((strcmp(pEntry->name, targetDirName)==0) && (pInode->type==FILE_TYPE_DIR)){
+              isExist=1;
+              isFound=1;
+              targetIndex=entryIdx;
+              indirectBlockIdx=i;
+              parentBlockNum=blockPtr;
+              break;
+            }
+            free(pInode);
+          }
         }
-        free(pInode);
       }
+      free(indirectBlockPtrs);
     }
   }
-  // indirect block이 존재하는 경우, indirect block 에서 중복 확인
-  if((isExist==0)&&(parentInode->indirectBlockPtr!=0)){
-    char* indirectBlockPtrs=malloc(BLOCK_SIZE);
-    DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
-    int blockPtr; // block pointer = block number
-    for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+
+  // direct block 에서 중복 확인
+  if(isExist==0){
+    for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
       if(isExist==1)
         break;
-      blockPtr=indirectBlockPtrs[i];
+      if(parentInode->dirBlockPtr[blockPtrIdx]==0){
+        continue;
+      }
       for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
-        if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
+        if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){
           continue;
         }
         else{
-          Inode* pInode=malloc(sizeof(Inode));
+          Inode* pInode = malloc(sizeof(Inode));
           GetInode(pEntry->inodeNum, pInode);
-          if((strcmp(pEntry->name, openDirName)==0) && (pInode->type==FILE_TYPE_FILE)){
+          if((strcmp(pEntry->name, targetDirName)==0)&&((pInode->type)==FILE_TYPE_DIR)){
             isExist=1;
             isFound=1;
             targetIndex=entryIdx;
-            indirectBlockIdx=i;
+            parentBlockNum=parentInode->dirBlockPtr[blockPtrIdx];
             break;
           }
           free(pInode);
         }
       }
     }
-    free(indirectBlockPtrs);
-  }
+  } // target 찾음(isExist=1) 못찾음(isExist=0)
 
   Inode* targetInode = malloc(sizeof(Inode));
   GetInode(pEntry->inodeNum, targetInode);
   DirEntry* entry=malloc(sizeof(DirEntry));
   // 빈 디렉토리가 아니면 -1 반환.
-  if((targetInode->type!=FILE_TYPE_DIR)||!(GetDirEntry(targetInode->dirBlockPtr[0], 2, entry)<0)){
+  if((targetInode->type!=FILE_TYPE_DIR)&&!(GetDirEntry(targetInode->dirBlockPtr[0], 2, entry)<0)){
     free(targetInode);
     free(entry);
     free(nameList);
@@ -1100,17 +1125,9 @@ int RemoveDirectory(char* name)
 
   DirEntry* parentDirectory=malloc(BLOCK_SIZE);
   /** parent directory entry 수정 **/
-  if(indirectBlockIdx<0){
-    // direct block
-    DevReadBlock(parentBlockNum, (char*)parentDirectory);
-    parentDirectory[targetIndex].inodeNum=INVALID_ENTRY;
-  }
-  else{
-    // indirect block
-    parentBlockNum=GetIndirectBlockEntry(parentInode->indirectBlockPtr, indirectBlockIdx);
-    DevReadBlock(parentBlockNum, (char*)parentDirectory);
-    parentDirectory[targetIndex].inodeNum=INVALID_ENTRY;
-  }
+  DevReadBlock(parentBlockNum, (char*)parentDirectory);
+  parentDirectory[targetIndex].inodeNum=INVALID_ENTRY;
+  DevWriteBlock(parentBlockNum, (char*)parentDirectory);
   /** Update bytemap **/
   ResetInodeBytemap(pEntry->inodeNum);
   ResetBlockBytemap(targetInode->dirBlockPtr[0]);
@@ -1124,7 +1141,7 @@ int RemoveDirectory(char* name)
   free(targetInode);
   free(entry);
   free(nameList);
-  free(parentInode);
+  //free(parentInode);
   free(pEntry);
 
   return 0;
@@ -1193,15 +1210,23 @@ void OpenFileSystem(void)
   DevOpenDisk();
   pFileDescTable=calloc(sizeof(FileDescTable), sizeof(char));
   pFileTable=calloc(sizeof(FileTable), sizeof(char));
+  /**
+  DevReadBlock(FILESYS_INFO_BLOCK,(char*)pFileSysInfo);
+  printf("rootInodeNum:%d numAllocBlocks:%d\n", pFileSysInfo->rootInodeNum, pFileSysInfo->numAllocBlocks);
+  **/
 }
 
 void CloseFileSystem(void)
 {
   DevCloseDisk();
-  if(pFileDescTable!=NULL)
+  /**
+  if(pFileDescTable!=0)
     free(pFileDescTable);
-  if(pFileTable!=NULL)
+  if(pFileTable!=0)
     free(pFileTable);
+  if(pFileSysInfo!=0)
+    free(pFileSysInfo);
+  **/
 }
 
 Directory* OpenDirectory(char* name)

@@ -120,7 +120,7 @@ void TestCase2(void)
     {
         memset(dirName, 0, MAX_NAME_LEN);
         sprintf(dirName, "/home/u%d", i);
-        //ListDirContents(dirName);
+        ListDirContents(dirName);
     }
 }
 
@@ -174,6 +174,75 @@ void TestCase3(void)
     ListDirContents("/home/u3");
 }
 
+
+void TestCase4(void)
+{
+    int i, j;
+    int fd;
+    char fileName[MAX_NAME_LEN];
+    char pBuffer1[BLOCK_SIZE*2];
+    char pBuffer2[BLOCK_SIZE*2];
+
+    printf(" ---- Test Case 4 ----\n");
+
+    for (i = 0;i < 9;i++)
+    {
+        memset(fileName, 0, MAX_NAME_LEN);
+        sprintf(fileName, "/home/u3/f%d", i);
+        fd = OpenFile(fileName, OPEN_FLAG_TRUNCATE);
+
+        memset(pBuffer1, 0, BLOCK_SIZE*2);
+        strcpy(pBuffer1, fileName);
+        for (j = 0; j < 10; j++)
+        {
+            WriteFile(fd, pBuffer1, BLOCK_SIZE*2);
+        }
+        CloseFile(fd);
+    }
+
+    printf(" ---- Test Case 4: truncated files are written ----\n");
+    ListDirContents("/home/u3");
+
+    for (i = 0;i < 9;i++)
+    {
+        memset(fileName, 0, MAX_NAME_LEN);
+        sprintf(fileName, "/home/u3/f%d", i);
+        fd = OpenFile(fileName, OPEN_FLAG_CREATE);
+
+        memset(pBuffer1, 0, BLOCK_SIZE*2);
+        strcpy(pBuffer1, fileName);
+
+        memset(pBuffer2, 0, BLOCK_SIZE*2);
+        for (j = 0; j < 10; j++){
+            ReadFile(fd, pBuffer2, BLOCK_SIZE*2);
+
+            if (strcmp(pBuffer1, pBuffer2))
+            {
+                printf("TestCase 3: error\n");
+                exit(0);
+            }
+        }
+        CloseFile(fd);
+    }
+
+    printf(" ---- Test Case 4: truncated files are read ----\n");
+    for (i = 0;i < 9;i++)
+    {
+        memset(fileName, 0, MAX_NAME_LEN);
+        sprintf(fileName, "/home/u3/f%d", i);
+        RemoveFile(fileName);
+    }
+
+    printf(" ---- Test Case 4: all files in /home/u3 are read ----\n");
+    ListDirContents("/home/u3");
+
+    printf(" ---- Test Case 4: /home/u3 directory is removed ----\n");
+    RemoveDirectory("/home/u3");
+    ListDirContents("/home");
+}
+
+
+
 int main(int argc, char** argv)
 {
     int TcNum;
@@ -184,7 +253,7 @@ ERROR:
         printf("usage: a.out [createfs| openfs] [1-5])\n");
         return -1;
     }
-    FileSysInit();
+    //FileSysInit();
     if (strcmp(argv[1], "createfs") == 0)
         CreateFileSystem();
     else if (strcmp(argv[1], "openfs") == 0)
@@ -210,6 +279,10 @@ ERROR:
         TestCase3();
         PrintFileSysInfo();
         break;
+    case 4:
+        TestCase4();
+        PrintFileSysInfo();
+        break;
     default:
         CloseFileSystem();
         goto ERROR;
@@ -220,7 +293,5 @@ ERROR:
 
     return 0;
 }
-
-
 
 
