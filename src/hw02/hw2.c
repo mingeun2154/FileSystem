@@ -309,8 +309,8 @@ int OpenFile(const char* name, OpenFlag flag)
     free(pInode);
 
     /** 6. update FileSystemInfo **/
-    pFileSysInfo=malloc(BLOCK_SIZE);
-    DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+    // pFileSysInfo=malloc(BLOCK_SIZE);
+    // DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
     pFileSysInfo->numAllocInodes++;
     DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
     free(pFileSysInfo);
@@ -524,12 +524,14 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
   int indirectBlockNum;
   int indirectBlockIndex;
   fileInode=malloc(sizeof(Inode));
+  fileInodeNumber=pFileTable->pFile->inodeNum;
   GetInode(fileInodeNumber, fileInode);
   
   fileTableIndex=pFileDescTable->pEntry[fileDesc].fileTableIndex;
   fileInodeNumber=pFileTable->pFile[fileTableIndex].inodeNum;
   offset=pFileTable->pFile[fileTableIndex].fileOffset;
 
+  pFileSysInfo=malloc(BLOCK_SIZE);
   DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
 
   //strncpy(fileBlocks+offset, pBuffer, length);
@@ -551,6 +553,7 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
         strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
         DevWriteBlock(newBlockNum, pBlock);
       }
+      // 원래 있던 block에 쓴다.
       else{
         strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
         DevWriteBlock(fileInode->dirBlockPtr[i], pBlock);
@@ -560,12 +563,14 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
     PutInode(fileInodeNumber, fileInode);
     pFileTable->pFile[fileTableIndex].fileOffset+=length;
     DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
-    free(pFileSysInfo);
     free(fileInode);
+    free(pFileSysInfo);
     return length;
   }
+  // indirect block
   else{
     for(int i=(offset/BLOCK_SIZE);i<blockCount;i++){
+      // indirect block을 새로 추가
       if(fileInode->indirectBlockPtr==0){
         indirectBlockNum=GetFreeBlockNum();
         SetBlockBytemap(indirectBlockNum);
@@ -582,6 +587,7 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
       }
       else{
         indirectBlockIndex=i-NUM_OF_DIRECT_BLOCK_PTR;
+        // indirect block이 가리키는 block 추가
         if(GetIndirectBlockEntry(fileInode->indirectBlockPtr, i)==0){
           newBlockNum=GetFreeBlockNum();
           SetBlockBytemap(newBlockNum);
@@ -591,17 +597,18 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
           strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
           DevWriteBlock(newBlockNum, pBlock);
         }
+        // indirect block이 가리키던 block에 쓴다.
         else{
           strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
           DevWriteBlock(newBlockNum, pBlock);
         }
       }
     }
-    PutInode(fileInodeNumber, fileInode);
+    //PutInode(fileInodeNumber, fileInode);
     pFileTable->pFile[fileTableIndex].fileOffset+=length;
     DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
-    free(pFileSysInfo);
     free(fileInode);
+    free(pFileSysInfo);
     return length;
   }
 
@@ -617,26 +624,43 @@ int ReadFile(int fileDesc, char* pBuffer, int length)
   int fileTableIndex;
   int offset;
   char* pBlock;
+  int* indirectBlock;
   
   fileTableIndex=pFileDescTable->pEntry[fileDesc].fileTableIndex;
   fileInodeNumber=pFileTable->pFile[fileTableIndex].inodeNum;
   offset=pFileTable->pFile[fileTableIndex].fileOffset;
 
+  GetInode(fileInodeNumber, fileInode);
   // file 크기가 0인 경우
   if(fileInode->size==0){
     free(pBlock);
     return 0;
   }
 
-  /** 2. file의 내용을 fileBlocks로 넣는다. **/
-  pBlock=calloc(BLOCK_SIZE, sizeof(char));
-  GetInode(fileInodeNumber, fileInode);
-  for(int i=0;i<(length/BLOCK_SIZE);i++){
-    DevReadBlock(fileInode->dirBlockPtr[(offset/BLOCK_SIZE)+i], pBlock);
-    strncpy(pBuffer+(i*BLOCK_SIZE), pBlock, BLOCK_SIZE);
+  int blockIndex=0;
+  indirectBlock=malloc(BLOCK_SIZE);
+  // Disk I/O를 줄이기 위해 indirect block이 필요하면 block 전체를 가져온다.
+  if((offset+length)/BLOCK_SIZE>4)
+    DevReadBlock(fileInode->indirectBlockPtr, (char*)indirectBlock);
+  pBlock=malloc(BLOCK_SIZE);
+
+  /** 2. file의 내용을 pBuffer로 넣는다. **/
+  for(int i=0;i<(length)/BLOCK_SIZE;i++){
+    blockIndex=offset/BLOCK_SIZE+i;
+    // Read from dirBlockPtr[i].
+    if(i<NUM_OF_DIRECT_BLOCK_PTR){
+      DevReadBlock(fileInode->dirBlockPtr[i], pBuffer+(i*BLOCK_SIZE));
+      //strncpy(pBuffer+(i*BLOCK_SIZE), pBlock, BLOCK_SIZE);
+    }
+    // Read from indirect block.
+    else{
+      blockIndex-NUM_OF_DIRECT_BLOCK_PTR;
+      DevReadBlock(indirectBlock[blockIndex], pBuffer+(i*BLOCK_SIZE));
+    }
   }
 
   free(pBlock);
+  free(fileInode);
   return length;
 }
 
@@ -1086,6 +1110,7 @@ int RemoveDirectory(char* name)
               isFound=1;
               targetIndex=entryIdx;
               parentBlockNum=blockPtr;
+              ResetInodeBytemap(pEntry->inodeNum);
               if(targetIndex==0){
                 parentInode->allocBlocks--;
                 pFileSysInfo->numAllocBlocks--;
@@ -1126,6 +1151,7 @@ int RemoveDirectory(char* name)
             isFound=1;
             targetIndex=entryIdx;
             parentBlockNum=parentInode->dirBlockPtr[blockPtrIdx];
+            ResetInodeBytemap(pEntry->inodeNum);
             if(targetIndex==0){
               parentInode->allocBlocks--;
               pFileSysInfo->numAllocBlocks--;
