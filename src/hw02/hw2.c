@@ -579,6 +579,7 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
         newBlockNum=GetFreeBlockNum();
         SetBlockBytemap(newBlockNum);
         fileInode->allocBlocks++;
+        fileInode->size=(fileInode->allocBlocks)*BLOCK_SIZE;
         pFileSysInfo->numAllocBlocks++;
         pFileSysInfo->numFreeBlocks--;
         PutIndirectBlockEntry(indirectBlockNum, 0, newBlockNum);
@@ -589,6 +590,8 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
         indirectBlockIndex=i-NUM_OF_DIRECT_BLOCK_PTR;
         // indirect block이 가리키는 block 추가
         if(GetIndirectBlockEntry(fileInode->indirectBlockPtr, i)==0){
+          fileInode->allocBlocks++;
+          fileInode->size=(fileInode->allocBlocks)*BLOCK_SIZE;
           newBlockNum=GetFreeBlockNum();
           SetBlockBytemap(newBlockNum);
           pFileSysInfo->numAllocBlocks++;
@@ -604,7 +607,7 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
         }
       }
     }
-    //PutInode(fileInodeNumber, fileInode);
+    PutInode(fileInodeNumber, fileInode);
     pFileTable->pFile[fileTableIndex].fileOffset+=length;
     DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
     free(fileInode);
@@ -680,7 +683,194 @@ int CloseFile(int fileDesc)
 
 int RemoveFile(char* name)
 {
+  /** 1. parent directory 탐색 **/
+  BOOL isExist=0; // 이미 존재하는 파일이면 1, 없으면 0
 
+  pFileSysInfo=malloc(BLOCK_SIZE);
+  DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+
+  int count=CountSLASH(name);
+  char** nameList=calloc(count, sizeof(char*));
+  GetFileNames(name, count, nameList);
+  char* targetDirName=nameList[count-1];
+  BOOL isFound;
+
+  int parentInodeNum=ROOT_INODE_NUM;
+  int parentBlockNum; // file이 생성될(또는 이미 존재하는) directory block
+  int targetIndex;
+  int indirectBlockIdx=-1;
+  Inode* parentInode=malloc(sizeof(Inode));
+  DirEntry* pEntry=malloc(sizeof(DirEntry));
+  GetInode(parentInodeNum, parentInode);
+
+  /** 2. 제거될 target의 parent directory의 inode를 찾는다 **/
+  // 경로에 있는 이름들을 탐색
+  isFound=0;
+  for(int i=0;i<count-1;i++){
+    isFound=0;
+    // direct block 탐색
+    for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
+      if(isFound==1)
+        break;
+      for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+        if(isFound==1)
+          break;
+        if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){ // invalid entry
+          continue;
+        }
+        else{
+          if(strcmp(pEntry->name, nameList[i])==0){
+            isFound=1;
+            parentInodeNum=pEntry->inodeNum;
+            GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+            break;
+          }
+          else{
+            continue;
+          }
+        }
+      }
+    }
+    // indirect block 탐색
+    if(isFound==0 && parentInode->indirectBlockPtr!=0){
+      char* indirectBlockPtrs=malloc(BLOCK_SIZE);
+      DevReadBlock(parentInode->indirectBlockPtr, indirectBlockPtrs);
+      int blockPtr; // block pointer = block number
+      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+        blockPtr=indirectBlockPtrs[i];
+        if(isFound==1)
+          break;
+        for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+          if(GetDirEntry(blockPtr, entryIdx, pEntry)<0) // invalid entry
+            continue;
+          else{
+            if(strcmp(pEntry->name, nameList[i])==0){
+              isFound=1;
+              parentInodeNum=pEntry->inodeNum;
+              GetInode(parentInodeNum, parentInode); // parent Inode 업데이트
+              break;
+            }
+          }
+        }
+      }
+      free(indirectBlockPtrs);
+    }
+
+    if(isFound==0){ // 유효하지 않은 경로(중간에 존재하지 않는 directory가 있다)
+      free(nameList);
+      free(parentInode);
+      free(pEntry);
+      return -1;
+    }
+  } // 제거할 target이 entry로 있는 parent directory 찾음.
+
+  /** 3-1. 이미 존재하는 파일인지 확인 **/
+  // indirect block이 존재하는 경우, indirect block 에서 target 탐색.
+  if(isExist==0){
+    if((isExist==0)&&(parentInode->indirectBlockPtr!=0)){
+      int* indirectBlockPtrs=malloc(BLOCK_SIZE);
+      DevReadBlock(parentInode->indirectBlockPtr, (char*)indirectBlockPtrs);
+      int blockPtr; // block pointer = block number
+      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
+        if(isExist==1)
+          break;
+        blockPtr=indirectBlockPtrs[i];
+        for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+          if(GetDirEntry(blockPtr, entryIdx, pEntry)<0){ // invalid entry
+            continue;
+          }
+          else{
+            Inode* pInode=malloc(sizeof(Inode));
+            GetInode(pEntry->inodeNum, pInode);
+            if((strcmp(pEntry->name, targetDirName)==0) && (pInode->type==FILE_TYPE_FILE)){
+              isExist=1;
+              isFound=1;
+              targetIndex=entryIdx;
+              parentBlockNum=blockPtr;
+              ResetInodeBytemap(pEntry->inodeNum);
+              if(targetIndex==0){
+                parentInode->allocBlocks--;
+                pFileSysInfo->numAllocBlocks--;
+                pFileSysInfo->numFreeBlocks++;
+                ResetBlockBytemap(blockPtr);
+                if(i==0){
+                  ResetBlockBytemap(blockPtr);
+                  parentInode->indirectBlockPtr=0;
+                }
+              }
+              break;
+            }
+            free(pInode);
+          }
+        }
+      }
+      free(indirectBlockPtrs);
+    }
+  }
+
+  // direct block 에서 target 탐색.
+  if(isExist==0){
+    for(int blockPtrIdx=0;blockPtrIdx<NUM_OF_DIRECT_BLOCK_PTR;blockPtrIdx++){
+      if(isExist==1)
+        break;
+      if(parentInode->dirBlockPtr[blockPtrIdx]==0){
+        continue;
+      }
+      for(int entryIdx=0;entryIdx<DIR_ENTRY_NUM;entryIdx++){
+        if(GetDirEntry(parentInode->dirBlockPtr[blockPtrIdx], entryIdx, pEntry)<0){
+          continue;
+        }
+        else{
+          Inode* pInode = malloc(sizeof(Inode));
+          GetInode(pEntry->inodeNum, pInode);
+          if((strcmp(pEntry->name, targetDirName)==0)&&((pInode->type)==FILE_TYPE_FILE)){
+            isExist=1;
+            isFound=1;
+            targetIndex=entryIdx;
+            parentBlockNum=parentInode->dirBlockPtr[blockPtrIdx];
+            ResetInodeBytemap(pEntry->inodeNum);
+            if(targetIndex==0){
+              parentInode->allocBlocks--;
+              pFileSysInfo->numAllocBlocks--;
+              pFileSysInfo->numFreeBlocks++;
+              parentInode->dirBlockPtr[blockPtrIdx]=0;
+              ResetBlockBytemap(parentInode->dirBlockPtr[blockPtrIdx]);
+            }
+            break;
+          }
+          free(pInode);
+        }
+      }
+    }
+  } // target 찾음(isExist=1) 못찾음(isExist=0)
+
+  Inode* targetInode = malloc(sizeof(Inode));
+  GetInode(pEntry->inodeNum, targetInode);
+  DirEntry* entry=malloc(sizeof(DirEntry));
+  /** file 내용 삭제 **/
+
+  DirEntry* parentDirectory=malloc(BLOCK_SIZE);
+  /** parent directory entry, inode 수정 **/
+  DevReadBlock(parentBlockNum, (char*)parentDirectory);
+  parentDirectory[targetIndex].inodeNum=INVALID_ENTRY;
+  DevWriteBlock(parentBlockNum, (char*)parentDirectory);
+  PutInode(parentInodeNum, parentInode);
+  /** Update bytemap **/
+  ResetInodeBytemap(pEntry->inodeNum);
+  ResetBlockBytemap(targetInode->dirBlockPtr[0]);
+  /** Update FileSysInfo **/
+  pFileSysInfo->numAllocBlocks--;
+  pFileSysInfo->numAllocInodes--;
+  pFileSysInfo->numFreeBlocks++;
+  DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+  
+  free(targetInode);
+  free(entry);
+  free(nameList);
+  //free(parentInode);
+  free(pEntry);
+
+  return 0;
 }
 
 
