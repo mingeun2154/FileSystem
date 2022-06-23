@@ -388,58 +388,49 @@ int OpenFile(const char* name, OpenFlag flag)
     int freeFileTableEntry=GetFreeFileTableEntryIdx(pFileTable);
     // printf("%d, %d\n", freeFDTableEtnry, freeFileTableEntry);
 
-    // open file의 크기를 0으로 만들기 위해 해당 파일의 inode를 획득한다.
-    Inode* pInode = malloc(sizeof(Inode));
-    GetInode(pEntry->inodeNum, pInode);
-
     /** 6. file이 가지고 있는 data를 모두 지운다. **/
-    int blockCount=0; // file에 할당된 data block개수.
-    // direct block의 data를 지운다.
-    for(int i=0;i<NUM_OF_DIRECT_BLOCK_PTR;i++){
-      int directBlockNum=pInode->dirBlockPtr[i];
-      if(directBlockNum==0)
-        continue;
-      else{
-        blockCount++;
-        ResetBlockBytemap(directBlockNum);
-        // 내용을 0으로 덮어쓴다.
-        char* pBuff=calloc(BLOCK_SIZE, sizeof(char));
-        DevWriteBlock(directBlockNum, pBuff);
-        pInode->dirBlockPtr[i]=0;
-      }
-    }
-    // indirect block 이 가리키는 data block 을 모두 지운다
-    if(pInode->indirectBlockPtr!=0){
-      int indirectBlockNum=pInode->indirectBlockPtr;
-      int* indirectBlock=malloc(BLOCK_SIZE);
-      int dataBlockNum;
-      // indirect block 획득
-      DevReadBlock(indirectBlockNum, (char*)indirectBlock);
-      for(int i=0;i<NUM_OF_INDIRECT_BLOCK_PTR;i++){
-        dataBlockNum=indirectBlock[i];
-        if(dataBlockNum!=0){
-          blockCount++;
-          ResetBlockBytemap(dataBlockNum);
-          // indirect block entry가 가리키는 data block을 0으로 덮어쓴다.
-          char* pBuff=calloc(BLOCK_SIZE, sizeof(char));
-          DevWriteBlock(dataBlockNum, pBuff);
-          free(pBuff);
-        }
-      }
-      free(indirectBlock);
-      pInode->indirectBlockPtr=0;
-    }
-    // Update inode.
-    pInode->allocBlocks=0;
-    pInode->size=0;
-    PutInode(pEntry->inodeNum, pInode);
+    Inode* targetInode = malloc(sizeof(Inode));
+    GetInode(pEntry->inodeNum, targetInode);
+    DirEntry* entry=malloc(sizeof(DirEntry));
 
-    // Update FilseSysInfo .
-    DevReadBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
-    pFileSysInfo->numFreeBlocks+=blockCount;
-    pFileSysInfo->numAllocBlocks-=blockCount;
-    pFileSysInfo->numFreeBlocks+=blockCount;
-    DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
+    int fileBlockNum;
+    char* emptyBlock;
+    emptyBlock=calloc(BLOCK_SIZE, sizeof(char));
+    int* indirectBlock;
+    indirectBlock=malloc(BLOCK_SIZE);
+
+    // indirect block 캐싱
+    if(targetInode->allocBlocks>NUM_OF_DIRECT_BLOCK_PTR)
+      DevReadBlock(targetInode->indirectBlockPtr, (char*)indirectBlock);
+    // 파일에 할당되어있던 block에 0을 집어넣는다.
+    for(int i=0;i<targetInode->allocBlocks;i++){
+      // direct block 
+      if(i<NUM_OF_DIRECT_BLOCK_PTR){
+        fileBlockNum=targetInode->dirBlockPtr[i];
+        DevWriteBlock(fileBlockNum, emptyBlock);
+        pFileSysInfo->numAllocBlocks--;
+        pFileSysInfo->numFreeBlocks++;
+        ResetBlockBytemap(fileBlockNum);
+      }
+      // indirect block
+      else{
+        fileBlockNum=indirectBlock[i];
+        DevWriteBlock(fileBlockNum, emptyBlock);
+        pFileSysInfo->numAllocBlocks--;
+        pFileSysInfo->numFreeBlocks++;
+        ResetBlockBytemap(fileBlockNum);
+      }
+    }
+    // Update file inode.
+    targetInode->allocBlocks=0;
+    for(int i=0;i<NUM_OF_DIRECT_BLOCK_PTR;i++)
+      targetInode->dirBlockPtr[i]=0;
+    targetInode->indirectBlockPtr=0;
+    targetInode->size=0;
+    PutInode(pEntry->inodeNum, targetInode);
+
+    free(emptyBlock);
+    free(indirectBlock);
 
     // descriptor table
     pFileDescTable->numUsedDescEntry++;
@@ -449,10 +440,9 @@ int OpenFile(const char* name, OpenFlag flag)
     pFileTable->numUsedFile++;
     pFileTable->pFile[freeFileTableEntry].bUsed=1;
     pFileTable->pFile[freeFileTableEntry].inodeNum=pEntry->inodeNum;
-    pFileTable->pFile[freeFileTableEntry].fileOffset=pInode->size; /** offset=(file size) **/
+    pFileTable->pFile[freeFileTableEntry].fileOffset=0; /** offset=(file size) **/
 
     free(nameList);
-    free(pInode);
     free(parentInode);
     free(pEntry);
     return freeFDTableEtnry;
@@ -539,24 +529,26 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
 
   /** 4. fileBlock을 disk에 저장한다. **/
   // direct block
+  int blockIndex;
   if(offset<NUM_OF_DIRECT_BLOCK_PTR*BLOCK_SIZE){
-    for(int i=(offset/BLOCK_SIZE);i<blockCount;i++){
+    for(int i=0;i<(length/BLOCK_SIZE);i++){
       // block을 새로 추가.
-      if(fileInode->dirBlockPtr[i]==0){
+      blockIndex=i+(offset/BLOCK_SIZE);
+      if(fileInode->dirBlockPtr[blockIndex]==0){
         fileInode->allocBlocks++;
         fileInode->size=(fileInode->allocBlocks)*BLOCK_SIZE;
         newBlockNum=GetFreeBlockNum();
-        fileInode->dirBlockPtr[i]=newBlockNum;
+        fileInode->dirBlockPtr[blockIndex]=newBlockNum;
         SetBlockBytemap(newBlockNum);
         pFileSysInfo->numAllocBlocks++;
         pFileSysInfo->numFreeBlocks--;
-        strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
-        DevWriteBlock(newBlockNum, pBlock);
+        //strncpy(pBlock, pBuffer+((i-length)*BLOCK_SIZE), BLOCK_SIZE);
+        DevWriteBlock(newBlockNum, pBuffer+(i*BLOCK_SIZE));
       }
       // 원래 있던 block에 쓴다.
       else{
-        strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
-        DevWriteBlock(fileInode->dirBlockPtr[i], pBlock);
+        //strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
+        DevWriteBlock(fileInode->dirBlockPtr[blockIndex], pBuffer+(i*BLOCK_SIZE));
       }
     }
     /** 5. Update inode, bytemap, FileSysInfo, file table(file offset). **/
@@ -569,42 +561,49 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
   }
   // indirect block
   else{
-    for(int i=(offset/BLOCK_SIZE);i<blockCount;i++){
+    for(int i=0;i<(length/BLOCK_SIZE);i++){
+      blockIndex=i+(offset/BLOCK_SIZE);
+      indirectBlockIndex=blockIndex-NUM_OF_DIRECT_BLOCK_PTR;
       // indirect block을 새로 추가
       if(fileInode->indirectBlockPtr==0){
         indirectBlockNum=GetFreeBlockNum();
         SetBlockBytemap(indirectBlockNum);
-        pFileSysInfo->numAllocBlocks++;
-        pFileSysInfo->numFreeBlocks--;
+        //pFileSysInfo->numAllocBlocks++;
+        //pFileSysInfo->numFreeBlocks--;
         newBlockNum=GetFreeBlockNum();
         SetBlockBytemap(newBlockNum);
         fileInode->allocBlocks++;
         fileInode->size=(fileInode->allocBlocks)*BLOCK_SIZE;
+        fileInode->indirectBlockPtr=indirectBlockNum;
+        //PutInode(fileInodeNumber, fileInode);
         pFileSysInfo->numAllocBlocks++;
         pFileSysInfo->numFreeBlocks--;
-        PutIndirectBlockEntry(indirectBlockNum, 0, newBlockNum);
-        strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
-        DevWriteBlock(newBlockNum, pBlock);
+        PutIndirectBlockEntry(indirectBlockNum, indirectBlockIndex, newBlockNum);
+        //strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
+        DevWriteBlock(newBlockNum, pBuffer+(i*BLOCK_SIZE));
       }
+      
+      // indirect block이 가리키는 block 추가
       else{
-        indirectBlockIndex=i-NUM_OF_DIRECT_BLOCK_PTR;
-        // indirect block이 가리키는 block 추가
-        if(GetIndirectBlockEntry(fileInode->indirectBlockPtr, i)==0){
+        indirectBlockNum=fileInode->indirectBlockPtr;
+        //if(GetIndirectBlockEntry(indirectBlockNum, indirectBlockIndex)==0){
           fileInode->allocBlocks++;
           fileInode->size=(fileInode->allocBlocks)*BLOCK_SIZE;
           newBlockNum=GetFreeBlockNum();
           SetBlockBytemap(newBlockNum);
           pFileSysInfo->numAllocBlocks++;
           pFileSysInfo->numFreeBlocks--;
-          PutIndirectBlockEntry(indirectBlockNum, 0, newBlockNum);
-          strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
-          DevWriteBlock(newBlockNum, pBlock);
-        }
+          PutIndirectBlockEntry(indirectBlockNum, indirectBlockIndex, newBlockNum);
+          //strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
+          DevWriteBlock(newBlockNum, pBuffer+(i*BLOCK_SIZE));
+        //}
         // indirect block이 가리키던 block에 쓴다.
+        /** 
         else{
-          strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
-          DevWriteBlock(newBlockNum, pBlock);
+          //strncpy(pBlock, pBuffer+(i*BLOCK_SIZE), BLOCK_SIZE);
+          //DevWriteBlock(, pBuffer+((i-offset)*BLOCK_SIZE));
         }
+        **/
       }
     }
     PutInode(fileInodeNumber, fileInode);
@@ -844,24 +843,56 @@ int RemoveFile(char* name)
     }
   } // target 찾음(isExist=1) 못찾음(isExist=0)
 
+  /** file에 할당된 block 해제 **/
   Inode* targetInode = malloc(sizeof(Inode));
   GetInode(pEntry->inodeNum, targetInode);
   DirEntry* entry=malloc(sizeof(DirEntry));
-  /** file 내용 삭제 **/
 
-  DirEntry* parentDirectory=malloc(BLOCK_SIZE);
+  int fileBlockNum;
+  char* emptyBlock;
+  emptyBlock=calloc(BLOCK_SIZE, sizeof(char));
+  Inode* emptyInode;
+  emptyInode=calloc(sizeof(Inode), sizeof(char));
+  int* indirectBlock;
+  indirectBlock=malloc(BLOCK_SIZE);
+
+  // indirect block 캐싱
+  if(targetInode->allocBlocks>NUM_OF_DIRECT_BLOCK_PTR)
+    DevReadBlock(targetInode->indirectBlockPtr, (char*)indirectBlock);
+  // 파일에 할당되어있던 block에 0을 집어넣는다.
+  for(int i=0;i<targetInode->allocBlocks;i++){
+    // direct block 
+    if(i<NUM_OF_DIRECT_BLOCK_PTR){
+      fileBlockNum=targetInode->dirBlockPtr[i];
+      DevWriteBlock(fileBlockNum, emptyBlock);
+      pFileSysInfo->numAllocBlocks--;
+      pFileSysInfo->numFreeBlocks++;
+      ResetBlockBytemap(fileBlockNum);
+    }
+    // indirect block
+    else{
+      fileBlockNum=indirectBlock[i];
+      DevWriteBlock(fileBlockNum, emptyBlock);
+      pFileSysInfo->numAllocBlocks--;
+      pFileSysInfo->numFreeBlocks++;
+      ResetBlockBytemap(fileBlockNum);
+    }
+  }
+  // file inode
+  PutInode(pEntry->inodeNum, emptyInode);
+  ResetInodeBytemap(pEntry->inodeNum);
+  pFileSysInfo->numAllocInodes--;
+  free(emptyBlock);
+  free(emptyInode);
+  free(indirectBlock);
+  
   /** parent directory entry, inode 수정 **/
+  DirEntry* parentDirectory=malloc(BLOCK_SIZE);
   DevReadBlock(parentBlockNum, (char*)parentDirectory);
   parentDirectory[targetIndex].inodeNum=INVALID_ENTRY;
   DevWriteBlock(parentBlockNum, (char*)parentDirectory);
   PutInode(parentInodeNum, parentInode);
-  /** Update bytemap **/
-  ResetInodeBytemap(pEntry->inodeNum);
-  ResetBlockBytemap(targetInode->dirBlockPtr[0]);
   /** Update FileSysInfo **/
-  pFileSysInfo->numAllocBlocks--;
-  pFileSysInfo->numAllocInodes--;
-  pFileSysInfo->numFreeBlocks++;
   DevWriteBlock(FILESYS_INFO_BLOCK, (char*)pFileSysInfo);
   
   free(targetInode);
