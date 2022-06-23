@@ -58,7 +58,7 @@ void SetBlockBytemap(int blkno)
 void ResetBlockBytemap(int blkno)
 {
   char* pBuff;
-  pBuff = calloc(BLOCK_SIZE, sizeof(char));
+  pBuff = malloc(BLOCK_SIZE);
   DevReadBlock(BLOCK_BYTEMAP_BLOCK_NUM, pBuff);
   pBuff[blkno]=0;
   DevWriteBlock(BLOCK_BYTEMAP_BLOCK_NUM, pBuff);

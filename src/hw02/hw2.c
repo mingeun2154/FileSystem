@@ -375,6 +375,7 @@ int OpenFile(const char* name, OpenFlag flag)
 
   /** 4-3. OPEN_FLAG_TRUNCATE **/
   else if((isExist==1)&&(flag==OPEN_FLAG_TRUNCATE)){
+
     //printf("OPEN_FLAG_TRUNCATE %d\t", pEntry->inodeNum);
     /** 5. descriptor table, file table, file object 설정 **/
     // descriptor table이 없었다면 생성.
@@ -400,10 +401,10 @@ int OpenFile(const char* name, OpenFlag flag)
     indirectBlock=malloc(BLOCK_SIZE);
 
     // indirect block 캐싱
-    if(targetInode->allocBlocks>NUM_OF_DIRECT_BLOCK_PTR)
+    if((targetInode->allocBlocks)>NUM_OF_DIRECT_BLOCK_PTR)
       DevReadBlock(targetInode->indirectBlockPtr, (char*)indirectBlock);
     // 파일에 할당되어있던 block에 0을 집어넣는다.
-    for(int i=0;i<targetInode->allocBlocks;i++){
+    for(int i=0;i<(targetInode->allocBlocks);i++){
       // direct block 
       if(i<NUM_OF_DIRECT_BLOCK_PTR){
         fileBlockNum=targetInode->dirBlockPtr[i];
@@ -421,6 +422,8 @@ int OpenFile(const char* name, OpenFlag flag)
         ResetBlockBytemap(fileBlockNum);
       }
     }
+    if(targetInode->allocBlocks>NUM_OF_DIRECT_BLOCK_PTR)
+      DevWriteBlock(targetInode->indirectBlockPtr, emptyBlock);
     // Update file inode.
     targetInode->allocBlocks=0;
     for(int i=0;i<NUM_OF_DIRECT_BLOCK_PTR;i++)
@@ -432,6 +435,7 @@ int OpenFile(const char* name, OpenFlag flag)
     free(emptyBlock);
     free(indirectBlock);
 
+    /** Update Tables **/
     // descriptor table
     pFileDescTable->numUsedDescEntry++;
     pFileDescTable->pEntry[freeFDTableEtnry].bUsed=1;
@@ -442,6 +446,7 @@ int OpenFile(const char* name, OpenFlag flag)
     pFileTable->pFile[freeFileTableEntry].inodeNum=pEntry->inodeNum;
     pFileTable->pFile[freeFileTableEntry].fileOffset=0; /** offset=(file size) **/
 
+    free(pFileSysInfo);
     free(nameList);
     free(parentInode);
     free(pEntry);
@@ -566,8 +571,11 @@ int WriteFile(int fileDesc, char* pBuffer, int length)
       indirectBlockIndex=blockIndex-NUM_OF_DIRECT_BLOCK_PTR;
       // indirect block을 새로 추가
       if(fileInode->indirectBlockPtr==0){
+        int* emptyBlock;
+        emptyBlock=calloc(BLOCK_SIZE, sizeof(char));
         indirectBlockNum=GetFreeBlockNum();
         SetBlockBytemap(indirectBlockNum);
+        DevWriteBlock(indirectBlockNum, (char*)emptyBlock);
         //pFileSysInfo->numAllocBlocks++;
         //pFileSysInfo->numFreeBlocks--;
         newBlockNum=GetFreeBlockNum();
@@ -879,8 +887,8 @@ int RemoveFile(char* name)
     }
   }
   // file inode
-  PutInode(pEntry->inodeNum, emptyInode);
-  ResetInodeBytemap(pEntry->inodeNum);
+  //PutInode(pEntry->inodeNum, emptyInode);
+  //ResetInodeBytemap(pEntry->inodeNum);
   pFileSysInfo->numAllocInodes--;
   free(emptyBlock);
   free(emptyInode);
@@ -898,7 +906,7 @@ int RemoveFile(char* name)
   free(targetInode);
   free(entry);
   free(nameList);
-  //free(parentInode);
+  free(parentInode);
   free(pEntry);
 
   return 0;
