@@ -2,20 +2,20 @@
 
 ## Contents
 * ### [이론](https://github.com/mingeun2154/FileSystem)
-	* [Disk](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#disk)
-	* [File System Info](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#File-System-Info)
-	* [inode](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#inode)
-	* [block](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#block)
-	* [bitmap](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#bitmap)
+	* [Disk](https://github.com/mingeun2154/FileSystem#disk)
+	* [File System Info](https://github.com/mingeun2154/FileSystem#File-System-Info)
+	* [inode](https://github.com/mingeun2154/FileSystem#inode)
+	* [block](https://github.com/mingeun2154/FileSystem#block)
+	* [bitmap](https://github.com/mingeun2154/FileSystem#bitmap)
 
 
 * ### [구현](https://github.com/mingeun2154/FileSystem/tree/main/src)
 	* [int MakeDirectory(char* name)](file:///home/mingeun/portfolio/FileSystem/README.md#makedirectorychar-name)
-	* [int OpenFile(char* name, OpenFlag flag)](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#int-openfilechar-name-openflag-flag)
+	* [int OpenFile(char* name, OpenFlag flag)](https://github.com/mingeun2154/FileSystem#int-openfilechar-name-openflag-flag)
 	* [int WriteFile(int fd, char* pBuff, int length)](file:///home/mingeun/portfolio/FileSystem/README.md#int-writefileint-fd-char-pbuff-int-length)
-	* [int ReadFile(int fd, char* pBuff, int length)](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#int-readfileint-fd-char-pbuff-int-length)  
+	* [int ReadFile(int fd, char* pBuff, int length)](https://github.com/mingeun2154/FileSystem#int-readfileint-fd-char-pbuff-int-length)  
 
-* ### [디버깅](https://github.com/mingeun2154/FileSystem/portfolio/FileSystem/README.md#%EB%94%94%EB%B2%84%EA%B9%85-1)
+* ### [디버깅](https://github.com/mingeun2154/FileSystem#%EB%94%94%EB%B2%84%EA%B9%85-1)
 
 ##   
 ### Disk
