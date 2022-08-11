@@ -4,3 +4,6 @@
 *.o
 test
 MY_DISK
+# 기타
+*.swp
+*.gitignore
