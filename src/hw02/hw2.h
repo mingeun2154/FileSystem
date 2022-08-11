@@ -9,7 +9,7 @@ typedef int BOOL;
 
 #define NUM_OF_DIRENT_PER_BLK   (BLOCK_SIZE / sizeof(DirEntry))
 #define DESC_ENTRY_NUM      (128)
-#define MAX_FILE_NUM        (64)
+#define MAX_FILE_NUM        (128)
 // ----------------------------------------------------------
 
 
@@ -24,13 +24,6 @@ typedef enum __OpenFlag {
     OPEN_FLAG_CREATE,
     OPEN_FLAG_APPEND
 } OpenFlag;
-
-
-typedef enum __fileType {
-    FILE_TYPE_FILE,
-    FILE_TYPE_DIR,
-    FILE_TYPE_DEV
-} FileType;
 
 
 typedef struct _FileSysInfo {

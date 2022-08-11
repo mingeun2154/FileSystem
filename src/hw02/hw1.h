@@ -9,27 +9,35 @@
 
 
 #define NUM_OF_DIRECT_BLOCK_PTR (4) /* direct block pointer의 개수 */
-#define MAX_NAME_LEN        (28)
+#define MAX_NAME_LEN        (60)
 
 
 #define FILESYS_INFO_BLOCK    (0) /* file system info block no. */
 #define INODE_BYTEMAP_BLOCK_NUM  (1) /* inode bytemap block no. */
 #define BLOCK_BYTEMAP_BLOCK_NUM  (2) /* block bytemap block no. */
 #define INODELIST_BLOCK_FIRST   (3) /* the first block no. of inode list */
-#define INODELIST_BLOCKS        (4) /* the number of blocks in inode list */
+#define INODELIST_BLOCKS        (8) /* the number of blocks in inode list */
 
 #define INVALID_ENTRY       (-1)
 // ----------------------------------------------------------
 
 
 
+typedef enum __fileType {
+    FILE_TYPE_FILE,
+    FILE_TYPE_DIR,
+    FILE_TYPE_DEV
+} FileType;
+
+
 typedef struct _Inode {
-    int     allocBlocks;
-    int     size;
-    int     type;
-    int     dirBlockPtr[NUM_OF_DIRECT_BLOCK_PTR];   // block pointers
-    int     indirectBlockPtr;               // indirect block pointer
+    int          allocBlocks;
+    int          size;
+    FileType   type;
+    int          dirBlockPtr[NUM_OF_DIRECT_BLOCK_PTR];   // block pointers
+    int          indirectBlockPtr;               // indirect block pointer
 } Inode;
+
 
 
 typedef struct  __dirEntry {

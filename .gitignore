@@ -7,3 +7,8 @@ MY_DISK
 # 기타
 *.swp
 *.gitignore
+# template
+template*
+# vscode
+*.vscode
+*.jason
